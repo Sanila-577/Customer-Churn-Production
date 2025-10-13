@@ -1,0 +1,14 @@
+artifact_uri: file:D:/mini_project1/mlruns/378927198956284072/f4bdf82bb92642459d97a13cac23a7d5/artifacts
+end_time: 1760290080401
+entry_point_name: ''
+experiment_id: '378927198956284072'
+lifecycle_stage: active
+run_id: f4bdf82bb92642459d97a13cac23a7d5
+run_name: training pipeline | 2025-10-12 22:57:30
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1760290050869
+status: 3
+tags: []
+user_id: hp

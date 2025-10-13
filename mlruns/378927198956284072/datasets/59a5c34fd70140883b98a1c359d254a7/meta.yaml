@@ -1,0 +1,23 @@
+digest: 3527c924
+name: existing_churn_train_data
+profile: '{"num_rows": 5634, "num_elements": 135216}'
+schema: '{"mlflow_colspec": [{"type": "long", "name": "gender", "required": true},
+  {"type": "long", "name": "SeniorCitizen", "required": true}, {"type": "long", "name":
+  "Partner", "required": true}, {"type": "long", "name": "Dependents", "required":
+  true}, {"type": "double", "name": "tenure", "required": true}, {"type": "long",
+  "name": "PhoneService", "required": true}, {"type": "long", "name": "MultipleLines",
+  "required": true}, {"type": "long", "name": "InternetService", "required": true},
+  {"type": "long", "name": "OnlineSecurity", "required": true}, {"type": "long", "name":
+  "OnlineBackup", "required": true}, {"type": "long", "name": "DeviceProtection",
+  "required": true}, {"type": "long", "name": "TechSupport", "required": true}, {"type":
+  "long", "name": "StreamingTV", "required": true}, {"type": "long", "name": "StreamingMovies",
+  "required": true}, {"type": "long", "name": "Contract", "required": true}, {"type":
+  "long", "name": "PaperlessBilling", "required": true}, {"type": "long", "name":
+  "PaymentMethod", "required": true}, {"type": "double", "name": "MonthlyCharges",
+  "required": true}, {"type": "double", "name": "TotalCharges", "required": true},
+  {"type": "long", "name": "Tenture_category", "required": true}, {"type": "long",
+  "name": "Charge_category", "required": true}, {"type": "long", "name": "Service_count",
+  "required": true}, {"type": "long", "name": "Bundle_user", "required": true}, {"type":
+  "long", "name": "Churn", "required": true}]}'
+source: '{"uri": "existing_processed_from_data/raw/TelcoCustomerChurn.csv"}'
+source_type: local

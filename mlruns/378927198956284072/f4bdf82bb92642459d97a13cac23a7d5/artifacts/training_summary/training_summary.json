@@ -1,0 +1,18 @@
+{
+  "model_type": "LogisticRegression",
+  "training_samples": 5634,
+  "test_samples": 1409,
+  "features_used": 23,
+  "training_time": 0.12363052368164062,
+  "model_path": "artifacts/models/churn_analysis.joblib",
+  "performance_metrics": {
+    "accuracy": 0.758694109297374,
+    "precision": 0.5277310924369748,
+    "recall": 0.8418230563002681,
+    "f1": 0.6487603305785123,
+    "training_time_seconds": 0.12363052368164062,
+    "model_complexity": 0,
+    "max_depth": 0
+  },
+  "timestamp": "2025-10-12T22:58:00.367277"
+}
