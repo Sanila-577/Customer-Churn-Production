@@ -13,9 +13,9 @@ A complete ML system with enhanced MLflow tracking that provides:
 ## 📁 Project Structure
 
 ```
-Week 05_06/
+./
 ├── README.md                          # This file - comprehensive project documentation
-├── Makefile                           # Build and deployment automation
+├── make.ps1                           # PowerShell helper to run pipelines on Windows
 ├── config.yaml                        # Central configuration management
 ├── requirements.txt                   # Python dependencies
 ├── stepplan.md                       # Task planning and dependency tracking
@@ -38,7 +38,7 @@ Week 05_06/
 │
 ├── data/                             # Data storage
 │   ├── raw/                          # Original raw data
-│   │   └── ChurnModelling.csv        # Raw customer churn dataset
+│   │   └── TelcoCustomerChurn.csv    # Raw customer churn dataset (project file)
 │   └── processed/                    # Intermediate processed data
 │       └── imputed.csv               # Data after missing value handling
 │
@@ -220,51 +220,60 @@ MLflow Run Artifacts:
 ## 🚀 Getting Started
 
 ### **Prerequisites**
-```bash
-# Install dependencies
-pip install -r requirements.txt
+```powershell
+# Create a venv if you don't have one (script also creates venv when you run the install target):
+python -m venv venv
 
-# Or using uv (recommended)
+# Activate the venv (Windows PowerShell)
+.\venv\Scripts\Activate.ps1
+# or, if your project uses .venv
+.\.venv\Scripts\Activate.ps1
+
+# Install dependencies with uv (recommended) so installers are executed via uv:
 uv pip install -r requirements.txt
+
+# Or, if you don't use uv, use pip inside the venv:
+python -m pip install -r requirements.txt
 ```
 
-### **Running the Pipelines**
+### **Running the Pipelines (preferred via `make.ps1`)**
+
+> The repository provides a PowerShell helper `make.ps1` with targets that activate the venv when present and run the pipelines.
 
 #### **1. Data Pipeline**
-```bash
-# Run data processing pipeline
-python pipelines/data_pipeline.py
+```powershell
+# Preferred (uses the script and venv activation if available)
+.\make.ps1 data-pipeline
 
-# Or using Makefile
-make data-pipeline
+# Or directly (module style)
+python -m pipelines.data_pipeline
 ```
 
 #### **2. Training Pipeline**
-```bash
-# Run model training pipeline
-python pipelines/training_pipeline.py
-
-# Or using Makefile  
-make train-model
+```powershell
+.\make.ps1 train-pipeline
+# Or directly
+python -m pipelines.training_pipeline
 ```
 
 #### **3. Inference Pipeline**
-```bash
-# Run streaming inference
-python pipelines/streaming_inference_pipeline.py
+```powershell
+.\make.ps1 streaming-inference
 
-# Or using Makefile
-make inference
+python -m pipelines.streaming_inference_pipeline
 ```
 
 ### **MLflow UI**
-```bash
-# Start MLflow UI to view experiments and artifacts
-mlflow ui
+```powershell
+# Use the script (it will try to activate the venv and launch MLflow)
+.\make.ps1 mlflow-ui
 
-# Access at: http://localhost:5000
+# Or activate venv and run MLflow explicitly (script uses port 5001 by default):
+.\venv\Scripts\Activate.ps1
+mlflow ui --backend-store-uri file:./mlruns --default-artifact-root ./artifacts --host 127.0.0.1 --port 5001
+
+# Access at: http://127.0.0.1:5001
 ```
-
 ## 📈 Key Benefits
 
 ### **🔍 Enhanced Observability**
@@ -286,19 +295,6 @@ mlflow ui
 
 The system is configured through `config.yaml`:
 
-```yaml
-mlflow:
-  tracking_uri: "file:./mlruns"
-  experiment_name: "Zuu Crew Churn Analysis"  
-  model_registry_name: "churn_prediction"
-  artifact_path: "model"
-  run_name_prefix: "churn_run"
-  tags:
-    project: "customer_churn_prediction"
-    team: "ml_engineering" 
-    environment: "development"
-  autolog: true
-```
 
 ## 📊 Performance Optimizations
 
@@ -331,4 +327,3 @@ The implementation follows clean architecture principles with separation of conc
 
 ---
 
-**Built with ❤️ for production-ready machine learning systems**
