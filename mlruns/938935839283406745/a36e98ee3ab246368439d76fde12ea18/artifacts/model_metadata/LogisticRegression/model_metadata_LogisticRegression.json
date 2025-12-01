@@ -1,0 +1,12 @@
+{
+  "model_name": "LogisticRegression",
+  "model_type": "LogisticRegression",
+  "model_parameters": {
+    "class_weight": "balanced",
+    "max_iter": 100
+  },
+  "training_time_seconds": 0.09543156623840332,
+  "sklearn_version": "1.7.2",
+  "model_size_mb": 0.0015859603881835938,
+  "timestamp": "2025-12-01T22:38:47.578598"
+}

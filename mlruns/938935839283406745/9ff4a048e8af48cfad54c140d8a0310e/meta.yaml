@@ -1,0 +1,14 @@
+artifact_uri: file:D:/ml projects/mini_project1/mlruns/938935839283406745/9ff4a048e8af48cfad54c140d8a0310e/artifacts
+end_time: 1764608951242
+entry_point_name: ''
+experiment_id: '938935839283406745'
+lifecycle_stage: active
+run_id: 9ff4a048e8af48cfad54c140d8a0310e
+run_name: streaming inference | 2025-12-01 22:39:09
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1764608950627
+status: 3
+tags: []
+user_id: hp
