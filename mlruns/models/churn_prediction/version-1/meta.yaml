@@ -1,18 +1,15 @@
-aliases: []
-creation_timestamp: 1760290080199
+creation_timestamp: 1764607674217
 current_stage: None
 deployment_job_state: null
 description: null
-last_updated_timestamp: 1760290080199
-metrics: null
-model_id: m-e0d1fabe201e42db945ba9fc84f9f238
+last_updated_timestamp: 1764607674217
+model_id: m-621ad019ce284abf8440b3c6bc26b95d
 name: churn_prediction
-params: null
-run_id: f4bdf82bb92642459d97a13cac23a7d5
+run_id: a93056ff23cd47fcbdfccad0d52f0bcc
 run_link: null
-source: models:/m-e0d1fabe201e42db945ba9fc84f9f238
+source: models:/m-621ad019ce284abf8440b3c6bc26b95d
 status: READY
 status_message: null
-storage_location: file:D:/mini_project1/mlruns/378927198956284072/models/m-e0d1fabe201e42db945ba9fc84f9f238/artifacts
+storage_location: file:D:/ml projects/mini_project1/mlruns/549185299087912826/models/m-621ad019ce284abf8440b3c6bc26b95d/artifacts
 user_id: null
 version: 1

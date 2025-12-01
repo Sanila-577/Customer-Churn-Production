@@ -1,0 +1,14 @@
+artifact_uri: file:D:/ml projects/mini_project1/mlruns/549185299087912826/c74ddda5900f4348a338cbd644ca9720/artifacts
+end_time: 1764607643394
+entry_point_name: ''
+experiment_id: '549185299087912826'
+lifecycle_stage: active
+run_id: c74ddda5900f4348a338cbd644ca9720
+run_name: data pipeline | 2025-12-01 22:17:20
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1764607641024
+status: 3
+tags: []
+user_id: hp

@@ -156,7 +156,7 @@ feature_scaling:
 inference:
   batch_size: 1000
   data_path: artifacts/data/X_test.csv
-  model_name: random_forest_cv_model
+  model_name: logistic_regression_cv_model
   return_proba: true
   sample_size: 100
   save_path: artifacts/predictions/predictions.csv
@@ -213,7 +213,7 @@ pipeline:
   training_pipeline_name: model_training_pipeline
 training:
   cv_folds: 5
-  default_model_type: random_forest
+  default_model_type: logistic_regression
   default_training_strategy: cv
   early_stopping_patience: 10
   hyperparameter_tuning:

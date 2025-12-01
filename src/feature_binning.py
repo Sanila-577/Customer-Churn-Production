@@ -163,38 +163,6 @@ class CustomBinningStratergy(FeatureBinningStrategy):
         """
         return self._charge_bin_edges
 
-    def get_charge_category_for_value(self, value):
-        """Map a single MonthlyCharges value to its charge category using stored interval dict.
-
-        Returns one of the labels (e.g., 'Low','Medium','High') or np.nan if value is NaN or mapping fails.
-        """
-        # handle NaN
-        if pd.isna(value):
-            return np.nan
-
-
-        if not self._charge_bin_edges:
-            # no intervals defined
-           logging.error("No charge bin edges defined. Cannot map value to category.")
-           raise RuntimeError("No charge bin edges defined. Cannot map value to category.")
-        # check intervals
-        for label, (left, right) in self._charge_bin_edges.items():
-            # include left and right bounds
-            if value >= left and value <= right:
-                return label
-
-        # fallback: choose nearest center
-        try:
-            labels = list(self._charge_bin_edges.keys())
-            centers = [(self._charge_bin_edges[l][0] + self._charge_bin_edges[l][1]) / 2.0 for l in labels]
-            dists = [abs(value - c) for c in centers]
-            return labels[int(np.argmin(dists))]
-        except Exception:
-            return np.nan
-
-    def assign_charge_category_series(self, series: pd.Series):
-        pass
-
     def bin_monthly_charges(self, obj):
         """Convenience method for streaming or batch inference.
 
@@ -239,40 +207,3 @@ class CustomBinningStratergy(FeatureBinningStrategy):
             obj['Charge_category'] = mapped
             return obj
         return mapped
-
-    def save_charge_bins(self, path: str):
-        """Save the stored charge bin edges to a .npy file for later reuse during inference.
-
-        Overwrites existing file at path.
-        """
-        if self._charge_bin_edges is None:
-            raise RuntimeError("No charge bin edges to save. Run bin_charges() first.")
-
-        dirpath = os.path.dirname(path)
-        if dirpath:
-            try:
-                os.makedirs(dirpath, exist_ok=True)
-            except Exception as e:
-                logger.error(f"✗ Failed to create directory for saving bins: {e}")
-                raise
-
-        try:
-            np.save(path, self._charge_bin_edges, allow_pickle=True)
-            logger.info(f"✓ Charge bin edges saved to {path}")
-        except Exception as e:
-            logger.error(f"✗ Failed to save charge bin edges to {path}: {e}")
-            raise
-
-    def load_charge_bins(self, path: str):
-        """Load charge bin edges from a .npy file and store them for inference mapping."""
-        if not os.path.exists(path):
-            logger.error(f"✗ Charge bin file not found at {path}")
-            raise FileNotFoundError(f"Charge bin file not found at {path}")
-
-        try:
-            self._charge_bin_edges = np.load(path, allow_pickle=True).item()
-            logger.info(f"✓ Charge bin edges loaded from {path}")
-            return self._charge_bin_edges
-        except Exception as e:
-            logger.error(f"✗ Failed to load charge bin edges from {path}: {e}")
-            raise

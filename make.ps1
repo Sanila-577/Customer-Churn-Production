@@ -17,12 +17,24 @@ param(
 
 # Settings
 $PYTHON = "python"
-$VENV_DIR = ".venv"
-$VENV_ACTIVATE = ".\.venv\Scripts\Activate.ps1"
+# Prefer an existing venv folder: check 'venv' then '.venv', default to 'venv'
+if (Test-Path ".\venv") { $VENV_DIR = "venv" }
+elseif (Test-Path ".\.venv") { $VENV_DIR = ".venv" }
+else { $VENV_DIR = "venv" }
+$VENV_ACTIVATE = ".\$VENV_DIR\Scripts\Activate.ps1"
+
+# Detect whether a wrapper 'uv' is available on PATH. If so, prefer using
+# `uv pip install ...` instead of calling pip directly through python.
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    $USE_UV = $true
+    Write-Host "Detected 'uv' on PATH; installer commands will use 'uv'" -ForegroundColor Cyan
+} else {
+    $USE_UV = $false
+}
 $MLFLOW_PORT = 5001
 
 function Help {
-    Write-Host "Available targets:`n"
+    Write-Host "Available targets: "
     Write-Host "  ./make.ps1 install             - Install dependencies & create venv"
     Write-Host "  ./make.ps1 data-pipeline       - Run the data pipeline"
     Write-Host "  ./make.ps1 train-pipeline      - Run the training pipeline"
@@ -37,9 +49,9 @@ function Install {
     Write-Host "Installing project dependencies and setting up environment..." -ForegroundColor Cyan
     if (-Not (Test-Path $VENV_DIR)) {
         & $PYTHON -m venv $VENV_DIR
-        Write-Host "Virtual environment created."
+        Write-Host "Virtual environment created at '$VENV_DIR'."
     } else {
-        Write-Host "Virtual environment already exists."
+        Write-Host "Virtual environment '$VENV_DIR' already exists."
     }
 
     # Dot-source the activate script so the venv is activated in the current session
@@ -49,10 +61,26 @@ function Install {
         Write-Host "Warning: Activate script not found at $VENV_ACTIVATE" -ForegroundColor Yellow
     }
 
-    & $PYTHON -m pip install --upgrade pip
-    & $PYTHON -m pip install -r requirements.txt
+    # Prefer the venv's python executable when available so installs target the venv
+    $venvPython = Join-Path (Get-Location) "$VENV_DIR\Scripts\python.exe"
+    if (Test-Path $venvPython) {
+        $PYTHON = $venvPython
+        Write-Host "Using venv python: $PYTHON"
+    } else {
+        Write-Host "Using system python: $PYTHON" -ForegroundColor Yellow
+    }
+
+    # Use 'uv' wrapper if available, otherwise call pip via the selected python
+    if ($USE_UV) {
+        Write-Host "Installing packages using 'uv pip'..." -ForegroundColor Cyan
+        & uv pip install --upgrade pip
+        & uv pip install -r requirements.txt
+    } else {
+        & $PYTHON -m pip install --upgrade pip
+        & $PYTHON -m pip install -r requirements.txt
+    }
     Write-Host "`n✅ Installation completed successfully!"
-    Write-Host "To activate manually: .\.venv\Scripts\Activate.ps1"
+    Write-Host "To activate manually: .\$VENV_DIR\Scripts\Activate.ps1"
 }
 
 function Clean {
@@ -120,15 +148,6 @@ function RunAll {
     StreamingInference
     Write-Host "✅ All pipelines completed"
 }
-# # Stop all running MLflow servers
-# stop-all:
-# 	@echo "Stopping all MLflow servers..."
-# 	@echo "Finding MLflow processes on port $(MLFLOW_PORT)..."
-# 	@-lsof -ti:$(MLFLOW_PORT) | xargs kill -9 2>/dev/null || true
-# 	@echo "Finding other MLflow UI processes..."
-# 	@-ps aux | grep '[m]lflow ui' | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
-# 	@-ps aux | grep '[g]unicorn.*mlflow' | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
-# 	@echo "✅ All MLflow servers have been stopped"
 
 switch ($target) {
     "help" { Help }
@@ -142,53 +161,3 @@ switch ($target) {
     "stop-all" { StopAll }
     default { Help }
 }
-
-
-# .PHONY: data-pipeline-rebuild
-# data-pipeline-rebuild:
-# 	@source $(VENV) && $(PYTHON) -c "from pipelines.data_pipeline import data_pipeline; data_pipeline(force_rebuild=True)"
-
-# # Run training pipeline
-# train-pipeline:
-# 	@echo "Running training pipeline..."
-# 	@source $(VENV) && $(PYTHON) pipelines/training_pipeline.py
-
-# # Run streaming inference pipeline with sample JSON
-# streaming-inference:
-# 	@echo "Running streaming inference pipeline with sample JSON..."
-# 	@source $(VENV) && $(PYTHON) pipelines/streaming_inference_pipeline.py
-
-# # Run all pipelines in sequence
-# run-all:
-# 	@echo "Running all pipelines in sequence..."
-# 	@echo "========================================"
-# 	@echo "Step 1: Running data pipeline"
-# 	@echo "========================================"
-# 	@source $(VENV) && $(PYTHON) pipelines/data_pipeline.py
-# 	@echo "\n========================================"
-# 	@echo "Step 2: Running training pipeline"
-# 	@echo "========================================"
-# 	@source $(VENV) && $(PYTHON) pipelines/training_pipeline.py
-# 	@echo "\n========================================"
-# 	@echo "Step 3: Running streaming inference pipeline"
-# 	@echo "========================================"
-# 	@source $(VENV) && $(PYTHON) pipelines/streaming_inference_pipeline.py
-# 	@echo "\n========================================"
-# 	@echo "All pipelines completed successfully!"
-# 	@echo "========================================"
-
-# mlflow-ui:
-# 	@echo "Launching MLflow UI..."
-# 	@echo "MLflow UI will be available at: http://localhost:$(MLFLOW_PORT)"
-# 	@echo "Press Ctrl+C to stop the server"
-# 	@source $(VENV) && mlflow ui --host 0.0.0.0 --port $(MLFLOW_PORT)
-
-# # Stop all running MLflow servers
-# stop-all:
-# 	@echo "Stopping all MLflow servers..."
-# 	@echo "Finding MLflow processes on port $(MLFLOW_PORT)..."
-# 	@-lsof -ti:$(MLFLOW_PORT) | xargs kill -9 2>/dev/null || true
-# 	@echo "Finding other MLflow UI processes..."
-# 	@-ps aux | grep '[m]lflow ui' | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
-# 	@-ps aux | grep '[g]unicorn.*mlflow' | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
-# 	@echo "✅ All MLflow servers have been stopped"
