@@ -3,7 +3,6 @@ import pandas as pd
 from enum import Enum
 from typing import Optional
 from dotenv import load_dotenv
-from pydantic import BaseModel
 from abc import ABC, abstractmethod
 import os
 import yaml
