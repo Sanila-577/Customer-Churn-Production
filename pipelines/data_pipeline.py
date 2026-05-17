@@ -1,12 +1,15 @@
 import os
-# import sys
+import sys
 import logging
-import pandas as pd
-from typing import Dict, Optional
+import json
+from typing import Dict, Optional, List, Tuple
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import json
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.ml import Pipeline, PipelineModel
 
 # Configure logging
 logging.basicConfig(
@@ -15,13 +18,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 from src.data_ingestion import DataIngestorCSV
 from src.handle_missing_values import DropMissingValuesStrategy, FillMissingValuesStrategy
 from src.outlier_detection import OutlierDetector, IQROutlierDetection
-from src.feature_binning import CustomBinningStratergy
-from src.feature_encoding import OrdinalEncodingStratergy, NominalEncodingStrategy
-from src.feature_scaling import StandardScalingStratergy
+from src.feature_binning import CustomBinningStrategy
+from src.feature_encoding import OrdinalEncodingStrategy, NominalEncodingStrategy
+from src.feature_scaling import StandardScalingStrategy
 from src.data_spiltter import SimpleTrainTestSplitStratergy
 
 from utils.config import (
@@ -32,15 +36,35 @@ from utils.config import (
     get_binning_config,
     get_encoding_config,
     get_scaling_config,
-    get_splitting_config
+    get_splitting_config,
+    
 )
 
+from src.spark_session import create_spark_session, stop_spark_session
+from src.spark_utils import save_dataframe, spark_to_pandas, get_dataframe_info, check_missing_values
 from utils.mlflow_utils import MLflowTracker, setup_mlflow_autolog, create_mlflow_run_tags
 import mlflow
+
+def _ensure_pandas_df(df):
+    if isinstance(df, pd.DataFrame):
+        return df
+    if isinstance(df, DataFrame):
+        return spark_to_pandas(df)
+    return pd.DataFrame(df)
+
+
+def _get_value_counts(df, column: str) -> Dict:
+    if isinstance(df, pd.DataFrame):
+        return df[column].value_counts().to_dict()
+
+    rows = df.groupBy(column).count().collect()
+    return {row[column]: row['count'] for row in rows}
+
 
 def create_data_visualizations(df: pd.DataFrame, stage: str, artifacts_dir: str):
     """Create essential data visualizations for MLflow artifacts."""
     try:
+        df = _ensure_pandas_df(df)
         stage_dir = os.path.join(artifacts_dir, f"visualizations_{stage}")
         os.makedirs(stage_dir, exist_ok=True)
         
@@ -87,21 +111,35 @@ def create_data_visualizations(df: pd.DataFrame, stage: str, artifacts_dir: str)
         logger.error(f"✗ Failed to create visualizations for {stage}: {str(e)}")
 
 
-def log_stage_metrics(df: pd.DataFrame, stage: str, additional_metrics: Dict = None):
+def log_stage_metrics(df: pd.DataFrame, stage: str, additional_metrics: Dict = None, spark: SparkSession = None):
     """Log key metrics for each processing stage."""
     try:
-        metrics = {
-            f'{stage}_rows': df.shape[0],
-            f'{stage}_columns': df.shape[1],
-            f'{stage}_missing_values': df.isnull().sum().sum(),
-            f'{stage}_memory_mb': df.memory_usage(deep=True).sum() / (1024**2)
-        }
+        if isinstance(df, pd.DataFrame):
+            total_missing = int(df.isna().sum().sum())
+            metrics = {
+                f'{stage}_rows': len(df),
+                f'{stage}_columns': len(df.columns),
+                f'{stage}_missing_values': total_missing,
+                f'{stage}_partitions': 1
+            }
+        else:
+            missing_counts = []
+            for col in df.columns:
+                missing_counts.append(df.filter(F.col(col).isNull()).count())
+            total_missing = sum(missing_counts)
+
+            metrics = {
+                f'{stage}_rows': df.count(),
+                f'{stage}_columns': len(df.columns),
+                f'{stage}_missing_values': total_missing,
+                f'{stage}_partitions': df.rdd.getNumPartitions()
+            }
         
         if additional_metrics:
             metrics.update({f'{stage}_{k}': v for k, v in additional_metrics.items()})
         
         mlflow.log_metrics(metrics)
-        logger.info(f"✓ Metrics logged for {stage}: {df.shape}")
+        logger.info(f"✓ Metrics logged for {stage}: ({metrics[f'{stage}_rows']}, {metrics[f'{stage}_columns']})")
         
     except Exception as e:
         logger.error(f"✗ Failed to log metrics for {stage}: {str(e)}")
@@ -181,12 +219,91 @@ def log_csv_artifacts(csv_files: Dict[str, str], artifacts_dir: str):
     except Exception as e:
         logger.error(f"✗ Failed to log CSV artifacts: {str(e)}")
 
+def save_processed_data(
+    X_train: DataFrame, 
+    X_test: DataFrame, 
+    Y_train: DataFrame, 
+    Y_test: DataFrame,
+    output_format: str = "both"
+) -> Dict[str, str]:
+    """
+    Save processed data in specified format(s).
+    
+    Args:
+        X_train, X_test, Y_train, Y_test: PySpark DataFrames
+        output_format: "csv", "parquet", or "both"
+        
+    Returns:
+        Dictionary of output paths
+    """
+    os.makedirs('artifacts/data', exist_ok=True)
+    paths = {}
+    
+    if output_format in ["csv", "both"]:
+        # Save as CSV
+        logger.info("Saving data in CSV format...")
+        
+        # Convert to pandas and save
+        X_train_pd = spark_to_pandas(X_train)
+        X_test_pd = spark_to_pandas(X_test)
+        Y_train_pd = spark_to_pandas(Y_train)
+        Y_test_pd = spark_to_pandas(Y_test)
+        
+        # Define correct column order
+        column_order = [
+            'customerID', 'gender', 'SeniorCitizen', 'Partner', 'Dependents', 
+            'tenure', 'PhoneService', 'MultipleLines', 'InternetService',
+            'OnlineSecurity', 'OnlineBackup', 'DeviceProtection',
+            'TechSupport', 'StreamingTV','StreamingMovies', 'Contract',
+            'PaperlessBilling','PaymentMethod', 'MonthlyCharges', 'TotalCharges',
+            'Churn'
+        ]
+        
+        # Reorder columns if all expected columns exist
+        expected_cols = [col for col in column_order if col in X_train_pd.columns]
+        if len(expected_cols) == len(column_order):
+            X_train_pd = X_train_pd[column_order]
+            X_test_pd = X_test_pd[column_order]
+            logger.info(f"✓ Columns reordered to match expected structure")
+        else:
+            logger.warning(f"⚠ Column mismatch. Expected: {column_order}, Found: {list(X_train_pd.columns)}")
+        
+        paths['X_train_csv'] = 'artifacts/data/X_train.csv'
+        paths['X_test_csv'] = 'artifacts/data/X_test.csv'
+        paths['Y_train_csv'] = 'artifacts/data/Y_train.csv'
+        paths['Y_test_csv'] = 'artifacts/data/Y_test.csv'
+        
+        X_train_pd.to_csv(paths['X_train_csv'], index=False)
+        X_test_pd.to_csv(paths['X_test_csv'], index=False)
+        Y_train_pd.to_csv(paths['Y_train_csv'], index=False)
+        Y_test_pd.to_csv(paths['Y_test_csv'], index=False)
+        
+        logger.info("✓ CSV files saved with correct column order")
+    
+    if output_format in ["parquet", "both"]:
+        # Save as Parquet
+        logger.info("Saving data in Parquet format...")
+        
+        paths['X_train_parquet'] = 'artifacts/data/X_train.parquet'
+        paths['X_test_parquet'] = 'artifacts/data/X_test.parquet'
+        paths['Y_train_parquet'] = 'artifacts/data/Y_train.parquet'
+        paths['Y_test_parquet'] = 'artifacts/data/Y_test.parquet'
+        
+        save_dataframe(X_train, paths['X_train_parquet'], format='parquet')
+        save_dataframe(X_test, paths['X_test_parquet'], format='parquet')
+        save_dataframe(Y_train, paths['Y_train_parquet'], format='parquet')
+        save_dataframe(Y_test, paths['Y_test_parquet'], format='parquet')
+        
+        logger.info("✓ Parquet files saved")
+    
+    return paths
 
 def data_pipeline(
     data_path: str = 'data/raw/TelcoCustomerChurn.csv',
     target_column: str = 'Churn',
     test_size: float = 0.2,
-    force_rebuild: bool = False
+    force_rebuild: bool = False,
+    output_format: str = "both"
 ) -> Dict[str, np.ndarray]:
     """
     Execute comprehensive data processing pipeline with MLflow tracking.
@@ -213,6 +330,7 @@ def data_pipeline(
         logger.error(f"✗ Invalid test_size: {test_size}")
         raise ValueError(f"Invalid test_size: {test_size}")
     
+    spark = create_spark_session("ChurnPredictionDataPipeline")
     try:
         # Load configurations
         data_paths = get_data_paths()
@@ -225,12 +343,14 @@ def data_pipeline(
         
         # Initialize MLflow tracking
         mlflow_tracker = MLflowTracker()
-        run_tags = create_mlflow_run_tags('data_pipeline', {
+        run_tags = create_mlflow_run_tags('data_pipeline_pyspark', {
             'data_source': data_path,
             'force_rebuild': str(force_rebuild),
-            'target_column': target_column
+            'target_column': target_column,
+            'output_format': output_format,
+            'processing_engine': 'pyspark'
         })
-        run = mlflow_tracker.start_run(run_name='data_pipeline', tags=run_tags)
+        run = mlflow_tracker.start_run(run_name='data_pipeline_pyspark', tags=run_tags)
         
         # Create artifacts directory
         run_artifacts_dir = os.path.join('artifacts', 'mlflow_run_artifacts', run.info.run_id)
@@ -251,6 +371,13 @@ def data_pipeline(
             Y_train = pd.read_csv(y_train_path)
             Y_test = pd.read_csv(y_test_path)
             
+            mlflow_tracker.log_data_pipeline_metrics({
+                'total_samples': len(X_train) + len(X_test),
+                'train_samples': len(X_train),
+                'test_samples': len(X_test),
+                'processing_engine': 'existing_artifacts'
+            })
+
             # Log existing data metrics
             log_stage_metrics(X_train, 'existing_train')
             log_stage_metrics(X_test, 'existing_test')
@@ -315,10 +442,10 @@ def data_pipeline(
         # Data ingestion
         ingestor = DataIngestorCSV()
         df = ingestor.ingest(data_path)
-        logger.info(f"✓ Raw data loaded: {df.shape}")
+        logger.info(f"✓ Raw data loaded: {get_dataframe_info(df)}")
         
         # Log raw data metrics and create visualizations
-        log_stage_metrics(df, 'raw')
+        log_stage_metrics(df, 'raw', spark=spark)
         create_data_visualizations(df, 'raw', run_artifacts_dir)
         
         # Log raw dataset as MLflow dataset artifact
@@ -328,7 +455,7 @@ def data_pipeline(
             
             # Create MLflow dataset from raw data
             raw_dataset = mlflow.data.from_pandas(
-                df, 
+                spark_to_pandas(df), 
                 source=data_path,
                 name="raw_churn_data",
                 targets=target_column
@@ -349,9 +476,10 @@ def data_pipeline(
         
         # Handle missing values
         logger.info("Handling missing values...")
-        initial_shape = df.shape
-        # drop_handler = DropMissingValuesStrategy(critical_columns=columns['critical_columns'])
-        fill_handler = FillMissingValuesStrategy(critical_column=columns['critical_features'], fill_value=0)
+        initial_count = df.count()
+
+        drop_handler = DropMissingValuesStrategy(critical_columns=columns['drop_columns'])
+        fill_handler = FillMissingValuesStrategy(critical_columns=columns['critical_features'], fill_value=0)
         # gender_handler = FillMissingValuesStrategy(
         #     relevant_column='Gender',
         #     is_custom_imputer=True,
@@ -364,44 +492,44 @@ def data_pipeline(
         df = fill_handler.handle(df)
         #df = gender_handler.handle(df)
         
-        rows_removed = initial_shape[0] - df.shape[0]
-        log_stage_metrics(df, 'missing_handled', {'rows_removed': rows_removed})
-        logger.info(f"✓ Missing values handled: {initial_shape} → {df.shape}")
+        rows_removed = initial_count - df.count()
+        log_stage_metrics(df, 'missing_handled', {'rows_removed': rows_removed},spark)
+        logger.info(f"✓ Missing values handled: {initial_count} rows → {df.count()} rows")
         
         # Outlier detection
         logger.info("Detecting and removing outliers...")
-        initial_shape = df.shape
-        outlier_detector = OutlierDetector(strategy=IQROutlierDetection())
+        initial_count = df.count()
+        outlier_detector = OutlierDetector(strategy=IQROutlierDetection(spark=spark))
         df = outlier_detector.handle_outliers(df, columns['outlier_columns'])
         
-        outliers_removed = initial_shape[0] - df.shape[0]
+        outliers_removed = initial_count - df.count()
         log_stage_metrics(df, 'outliers_removed', {'outliers_removed': outliers_removed})
-        logger.info(f"✓ Outliers removed: {initial_shape} → {df.shape}")
+        logger.info(f"✓ Outliers removed: {initial_count} rows → {df.count()} rows")
         
         # Feature binning
         logger.info("Applying feature binning...")
-        binning = CustomBinningStratergy(binning_config['tenure_bins'])
+        binning = CustomBinningStrategy(binning_config['tenure_bins'], spark=spark)
         df = binning.bin_feature(df, 'tenure')
         df = binning.bin_feature(df, 'MonthlyCharges')
-        binning.service_count(df,binning_config['service_columns'])
-        binning.bundle_user(df, binning_config['bundle_columns'])
+        df = binning.service_count(df, binning_config['service_columns'])
+        df = binning.bundle_user(df, binning_config['bundle_columns'])
 
         
         # Log binning distribution
         if 'Charge_category' in df.columns:
-            bin_dist = df['Charge_category'].value_counts().to_dict()
+            bin_dist = _get_value_counts(df, 'Charge_category')
             mlflow.log_metrics({f'Charge_category_{k}': v for k, v in bin_dist.items()})
 
-        if 'Tenture_category' in df.columns:
-            bin_dist = df['Tenture_category'].value_counts().to_dict()
-            mlflow.log_metrics({f'Tenture_category_{k}': v for k, v in bin_dist.items()})
+        if 'Tenure_category' in df.columns:
+            bin_dist = _get_value_counts(df, 'Tenure_category')
+            mlflow.log_metrics({f'Tenure_category_{k}': v for k, v in bin_dist.items()})
 
         if 'Service_count' in df.columns:
-            bin_dist = df['Service_count'].value_counts().to_dict()
+            bin_dist = _get_value_counts(df, 'Service_count')
             mlflow.log_metrics({f'Service_count_{k}': v for k, v in bin_dist.items()})
         
         if 'Bundle_user' in df.columns:
-            bin_dist = df['Bundle_user'].value_counts().to_dict()
+            bin_dist = _get_value_counts(df, 'Bundle_user')
             mlflow.log_metrics({f'Bundle_user_{k}': v for k, v in bin_dist.items()})
 
         
@@ -409,55 +537,81 @@ def data_pipeline(
         
         # Feature encoding
         logger.info("Applying feature encoding...")
-        nominal_strategy = NominalEncodingStrategy(encoding_config['nominal_columns'])
-        ordinal_strategy = OrdinalEncodingStratergy({'Churn': {'No': 0, 'Yes': 1}})
+        nominal_strategy = NominalEncodingStrategy(encoding_config['nominal_columns'], spark=spark)
+        ordinal_strategy = OrdinalEncodingStrategy({'Churn': {'No': 0, 'Yes': 1}}, spark=spark)
         
         df = nominal_strategy.encode(df)
         df = ordinal_strategy.encode(df)
         
-        logger.info(f"statistics after ordinal encoding {df.info()}")
+        logger.info(f"statistics after ordinal encoding {get_dataframe_info(df)}")
         log_stage_metrics(df, 'encoded')
         create_data_visualizations(df, 'encoded', run_artifacts_dir)
         logger.info("✓ Feature encoding completed")
         
-        # Feature scaling
-        logger.info("Applying feature transformation...")
-        standard_strategy = StandardScalingStratergy()
-        df = standard_strategy.transform(df,scaling_config['columns_to_transform'])
-        
-        logger.info("Applying feature scaling...")
-        df = standard_strategy.scale(df, scaling_config['columns_to_scale'])
-        logger.info("✓ Feature scaling completed")
-        
-        # Post-processing
-        drop_columns = columns['drop_columns']
-        existing_drop_columns = [col for col in drop_columns if col in df.columns]
-        if existing_drop_columns:
-            df = df.drop(columns=existing_drop_columns)
-            logger.info(f"✓ Dropped columns: {existing_drop_columns}")
-        
+        from src.data_spiltter import StratifiedTrainTestSplitStrategy
         # Data splitting
         logger.info("Splitting data...")
-        splitting_strategy = SimpleTrainTestSplitStratergy(test_size=splitting_config['test_size'])
+        splitting_strategy = StratifiedTrainTestSplitStrategy(test_size=splitting_config['test_size'], spark=spark)
         X_train, X_test, Y_train, Y_test = splitting_strategy.split_data(df, target_column)
+
+        # Drop non-predictive identifier columns before scaling
+        drop_columns = columns['drop_columns']
+        existing_drop_columns = [col for col in drop_columns if col in X_train.columns]
+        if existing_drop_columns:
+            X_train = X_train.drop(*existing_drop_columns)
+            X_test = X_test.drop(*existing_drop_columns)
+            logger.info(f"✓ Dropped columns before scaling: {existing_drop_columns}")
+
+        # Feature scaling after train/test split using train-fitted scalers
+        logger.info("Applying feature transformation...")
+        standard_strategy = StandardScalingStrategy(spark=spark)
+        logger.info("Applying feature scaling...")
+        X_train_scaled, X_test_scaled = standard_strategy.fit_scale_pair(
+            X_train,
+            X_test,
+            scaling_config['columns_to_scale']
+        )
+        logger.info("✓ Feature scaling completed")
         
-        # Create directories and save splits
-        os.makedirs('artifacts/data', exist_ok=True)
-        X_train.to_csv(x_train_path, index=False)
-        X_test.to_csv(x_test_path, index=False)
-        Y_train.to_csv(y_train_path, index=False)
-        Y_test.to_csv(y_test_path, index=False)
+        output_paths = save_processed_data(X_train_scaled, X_test_scaled, Y_train, Y_test, output_format)
+        
+        # # Create directories and save splits
+        # os.makedirs('artifacts/data', exist_ok=True)
+        # X_train.to_csv(x_train_path, index=False)
+        # X_test.to_csv(x_test_path, index=False)
+        # Y_train.to_csv(y_train_path, index=False)
+        # Y_test.to_csv(y_test_path, index=False)
         
         logger.info("✓ Data splitting completed")
-        logger.info(f"  • X_train: {X_train.shape}")
-        logger.info(f"  • X_test: {X_test.shape}")
-        logger.info(f"  • Y_train: {Y_train.shape}")
-        logger.info(f"  • Y_test: {Y_test.shape}")
+        logger.info(f"\nDataset shapes after splitting:")
+        logger.info(f"  • X_train: {X_train_scaled.count()} rows, {len(X_train_scaled.columns)} columns")
+        logger.info(f"  • X_test:  {X_test_scaled.count()} rows, {len(X_test_scaled.columns)} columns")
+        logger.info(f"  • Y_train: {Y_train.count()} rows, 1 column")
+        logger.info(f"  • Y_test:  {Y_test.count()} rows, 1 column")
+        logger.info(f"  • Feature columns: {X_train_scaled.columns}")
+        
+        if hasattr(standard_strategy, 'scaler_models'):
+            model_path = os.path.join('artifacts', 'encode', 'fitted_preprocessing_model')
+            os.makedirs(model_path, exist_ok=True)
+            
+            # Save metadata about the preprocessing
+            preprocessing_metadata = {
+                'scaling_columns': scaling_config['columns_to_scale'],
+                'encoding_columns': encoding_config['nominal_columns'],
+                'ordinal_mappings': encoding_config['ordinal_mappings'],
+                'binning_config': binning_config,
+                'spark_version': spark.version
+            }
+            
+            with open(os.path.join(model_path, 'metadata.json'), 'w') as f:
+                json.dump(preprocessing_metadata, f, indent=2)
+            
+            logger.info(f"✓ Saved preprocessing metadata to {model_path}")
         
         # Final metrics and visualizations
-        log_stage_metrics(X_train, 'final_train')
-        log_stage_metrics(X_test, 'final_test')
-        create_data_visualizations(pd.concat([X_train, X_test]), 'final', run_artifacts_dir)
+        log_stage_metrics(X_train_scaled, 'final_train', spark=spark)
+        log_stage_metrics(X_test_scaled, 'final_test',spark=spark)
+        create_data_visualizations(pd.concat([spark_to_pandas(X_train_scaled), spark_to_pandas(X_test_scaled)], axis=0, ignore_index=True), 'final', run_artifacts_dir)
         
         # Log final processed datasets as MLflow dataset artifacts
         try:
@@ -465,7 +619,7 @@ def data_pipeline(
             
             # Create training dataset
             train_dataset = mlflow.data.from_pandas(
-                pd.concat([X_train, Y_train], axis=1),
+                pd.concat([spark_to_pandas(X_train_scaled), spark_to_pandas(Y_train)], axis=1),
                 source=f"processed_from_{data_path}",
                 name="processed_churn_train_data",
                 targets=target_column
@@ -473,7 +627,7 @@ def data_pipeline(
             
             # Create test dataset  
             test_dataset = mlflow.data.from_pandas(
-                pd.concat([X_test, Y_test], axis=1),
+                pd.concat([spark_to_pandas(X_test_scaled), spark_to_pandas(Y_test)], axis=1),
                 source=f"processed_from_{data_path}",
                 name="processed_churn_test_data", 
                 targets=target_column
@@ -490,63 +644,80 @@ def data_pipeline(
         
         # Log comprehensive pipeline metrics
         comprehensive_metrics = {
-            'total_samples': len(X_train) + len(X_test),
-            'train_samples': len(X_train),
-            'test_samples': len(X_test),
-            'final_features': X_train.shape[1],
-            'train_class_0': (Y_train == 0).sum(),
-            'train_class_1': (Y_train == 1).sum(),
-            'test_class_0': (Y_test == 0).sum(),
-            'test_class_1': (Y_test == 1).sum()
+            'total_samples': X_train_scaled.count() + X_test_scaled.count(),
+            'train_samples': X_train_scaled.count(),
+            'test_samples': X_test_scaled.count(),
+            'final_features': len(X_train_scaled.columns),
+            'processing_engine': 'pyspark',
+            'output_format': output_format
         }
-
+        
+        # Get class distribution
+        train_dist = Y_train.groupBy(target_column).count().collect()
+        test_dist = Y_test.groupBy(target_column).count().collect()
+        
+        for row in train_dist:
+            comprehensive_metrics[f'train_class_{row[target_column]}'] = row['count']
+        for row in test_dist:
+            comprehensive_metrics[f'test_class_{row[target_column]}'] = row['count']
+        
         mlflow_tracker.log_data_pipeline_metrics(comprehensive_metrics)
         
         # Log parameters
         mlflow.log_params({
-            'final_feature_names': list(X_train.columns),
+            'final_feature_names': list(X_train_scaled.columns),
             'preprocessing_steps': ['missing_values', 'outlier_detection', 'feature_binning', 'feature_encoding', 'feature_scaling'],
-            'data_pipeline_version': '2.1_optimized'
+            'data_pipeline_version': '3.0_pyspark'
         })
         
-        # Log processed datasets as artifacts
-        mlflow.log_artifact(x_train_path, "processed_datasets")
-        mlflow.log_artifact(x_test_path, "processed_datasets")
-        mlflow.log_artifact(y_train_path, "processed_datasets")
-        mlflow.log_artifact(y_test_path, "processed_datasets")
-        
-        # Log final CSV files as artifacts with detailed metadata
-        logger.info("Logging final train/test CSV files as MLflow artifacts...")
-        final_csv_files = {
-            'X_train': x_train_path,
-            'X_test': x_test_path,
-            'Y_train': y_train_path,
-            'Y_test': y_test_path
-        }
-        log_csv_artifacts(final_csv_files, run_artifacts_dir)
+         # Log artifacts
+        for path_key, path_value in output_paths.items():
+            if os.path.exists(path_value):
+                mlflow.log_artifact(path_value, "processed_datasets")
         
         mlflow_tracker.end_run()
-        logging.info(df.info())
         
-        logger.info("✓ Data pipeline completed successfully!")
-        logger.info(f"{'='*80}\n")
+        # Convert to numpy arrays for return
+        X_train_np = spark_to_pandas(X_train_scaled).values
+        X_test_np = spark_to_pandas(X_test_scaled).values
+        Y_train_np = spark_to_pandas(Y_train).values.ravel()
+        Y_test_np = spark_to_pandas(Y_test).values.ravel()
+        
+        logger.info(f"\n{'='*80}")
+        logger.info(f"FINAL DATASET SHAPES")
+        logger.info(f"{'='*80}")
+        logger.info(f"✓ Final dataset shapes:")
+        logger.info(f"  • X_train shape: {X_train_np.shape} (rows: {X_train_np.shape[0]}, features: {X_train_np.shape[1]})")
+        logger.info(f"  • X_test shape:  {X_test_np.shape} (rows: {X_test_np.shape[0]}, features: {X_test_np.shape[1]})")
+        logger.info(f"  • Y_train shape: {Y_train_np.shape} (rows: {Y_train_np.shape[0]})")
+        logger.info(f"  • Y_test shape:  {Y_test_np.shape} (rows: {Y_test_np.shape[0]})")
+        logger.info(f"  • Total samples: {X_train_np.shape[0] + X_test_np.shape[0]}")
+        logger.info(f"  • Train/Test ratio: {X_train_np.shape[0]/(X_train_np.shape[0] + X_test_np.shape[0]):.1%} / {X_test_np.shape[0]/(X_train_np.shape[0] + X_test_np.shape[0]):.1%}")
+        
+        logger.info(f"\n{'='*80}")
+        logger.info(f"PIPELINE COMPLETED SUCCESSFULLY")
+        logger.info(f"{'='*80}")
+        logger.info("✓ PySpark data pipeline completed successfully!")
         
         return {
-            'X_train': X_train.values,
-            'X_test': X_test.values,
-            'Y_train': Y_train.values.ravel(),
-            'Y_test': Y_test.values.ravel()
+            'X_train': X_train_np,
+            'X_test': X_test_np,
+            'Y_train': Y_train_np,
+            'Y_test': Y_test_np
         }
-        
     except Exception as e:
         logger.error(f"✗ Data pipeline failed: {str(e)}")
         if 'mlflow_tracker' in locals():
             mlflow_tracker.end_run()
         raise
+    finally:
+        stop_spark_session(spark)
 if __name__ == "__main__":
-    data_pipeline(
+    processed_data = data_pipeline(
         data_path =  'data/raw/TelcoCustomerChurn.csv',
         target_column =  'Churn',
         test_size =  0.2,
-        force_rebuild = False
+        force_rebuild = False,
+        output_format="both"
         )
+    logger.info(f"Pipeline completed. Train samples: {processed_data['X_train'].shape[0]}")

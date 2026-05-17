@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from abc import ABC, abstractmethod
 import os
 import yaml
+from pyspark.sql import DataFrame as SparkDataFrame
+from pyspark.sql import functions as F
 
 import sys
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -43,50 +45,73 @@ class FillMissingValuesStrategy(MissingValueHandlingStrategy):
             self,
             fill_value = None,
             critical_column = None,
+            critical_columns = None,
             is_custom_imputer = False,
             custom_imputer = None
             ):
         
         self.fill_value = fill_value
-        self.critical_column = critical_column
+        if critical_columns is None:
+            critical_columns = critical_column
+        if critical_columns is None:
+            self.critical_columns = []
+        elif isinstance(critical_columns, (list, tuple, set)):
+            self.critical_columns = list(critical_columns)
+        else:
+            self.critical_columns = [critical_columns]
         self.is_custom_imputer = is_custom_imputer
-        self.is_custom_imputer = custom_imputer
+        self.custom_imputer = custom_imputer
+
+    def _is_spark_df(self, df):
+        return isinstance(df, SparkDataFrame)
 
 
     def convert(self, df, critical_features={
         'TotalCharges': 'numeric'
     }):
+        if self._is_spark_df(df):
+            for col, dtype in critical_features.items():
+                if dtype == 'numeric' and col in df.columns:
+                    df = df.withColumn(
+                        col,
+                        F.when(F.trim(F.col(col).cast('string')) == '', None)
+                        .otherwise(F.col(col).cast('double'))
+                    )
+            logging.info("Converted critical features to Spark numeric columns where needed.")
+            df.printSchema()
+            return df
+
         for col, dtype in critical_features.items():
-            if dtype == 'numeric':
+            if dtype == 'numeric' and col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        with open(CONFIG_FILE, 'r') as f:
-            config = yaml.safe_load(f)
-
-        columns = config.get('columns', {})
-
-        # ✅ Ensure 'TotalCharges' is added to numeric_columns if missing
-        numeric_cols = columns.get('numeric_columns', [])
-        if 'TotalCharges' not in numeric_cols:
-            numeric_cols.append('TotalCharges')
-            columns['numeric_columns'] = numeric_cols
-
-        # ✅ Write back only updated 'columns' section, preserving everything else
-        config['columns'] = columns
-
-        with open(CONFIG_FILE, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False)
-
-        logging.info("Updated 'TotalCharges' added to numeric_columns if missing.")
+        logging.info("Converted critical features to pandas numeric columns where needed.")
         logging.info(df.info())
-
         return df
 
     def handle(self,df):
         if self.is_custom_imputer:
             return self.custom_imputer.impute(df)
-        df[self.critical_column] = df[self.critical_column].fillna(self.fill_value)
-        logging.info(f'Missing values filled in column {self.critical_column}.')
+
+        if self._is_spark_df(df):
+            if not self.critical_columns:
+                return df
+            fill_map = {col: self.fill_value for col in self.critical_columns if col in df.columns}
+            if fill_map:
+                df = df.fillna(fill_map)
+            logging.info(f"Missing values filled in columns {list(fill_map.keys())}.")
+            df.printSchema()
+            return df
+
+        if not self.critical_columns:
+            return df
+
+        existing_columns = [col for col in self.critical_columns if col in df.columns]
+        if len(existing_columns) == 1:
+            df[existing_columns[0]] = df[existing_columns[0]].fillna(self.fill_value)
+        elif existing_columns:
+            df[existing_columns] = df[existing_columns].fillna(self.fill_value)
+        logging.info(f'Missing values filled in columns {existing_columns}.')
         logging.info(df.info())
         return df
     

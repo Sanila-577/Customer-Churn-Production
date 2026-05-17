@@ -7,40 +7,33 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
-from src.feature_binning import CustomBinningStratergy
-from src.feature_encoding import OrdinalEncodingStratergy
-from src.feature_scaling import StandardScalingStratergy
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import functions as F
+from src.spark_session import get_or_create_spark_session
+from spark_utils import spark_to_pandas
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
-from utils.config import get_binning_config, get_encoding_config, get_scaling_config, get_columns, get_data_paths
+from config import get_binning_config, get_encoding_config, get_scaling_config
 logging.basicConfig(level=logging.INFO, format=
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# customerID,gender,SeniorCitizen,Partner,Dependents,tenure,PhoneService,MultipleLines,InternetService,OnlineSecurity,OnlineBackup,DeviceProtection,TechSupport,StreamingTV,StreamingMovies,Contract,PaperlessBilling,PaymentMethod,MonthlyCharges,TotalCharges,Churn
 """ 
-7590-VHVEG,Female,0,Yes,No,1,No,No phone service,DSL,No,Yes,No,No,No,No,Month-to-month,Yes,Electronic check,29.85,29.85,No
 {
-  "customerID": "7591-TWISD",
-  "gender": "Male",
-  "SeniorCitizen": 1,
-  "Partner": "Yes",
-  "Dependents: "No",
-  "tenure": 50,
-  "PhoneService": "No",
-  "MultipleLines": "No phone service",
-  "InternetService": "DSL",
-  "OnlineSecurity": "Yes",
-  "OnlineBackup": "Yes",
-  "DeviceProtection": "No",
-  "TechSupport": "Yes",
-  "StreamingTV": "Yes" ,
-  "StreamingMovies": "Yes",
-  "Contract": "One year",
-  "PaperlessBilling": "No",
-  "PaymentMethod": "Electronic check",
-  "MonthlyCharges": 63.6,
-  "TotalCharges": 1050
+  "RowNumber": 1,
+  "CustomerId": 15634602,
+  "Firstname": "Grace",
+  "Lastname": "Williams",
+  "CreditScore": 619,
+  "Geography": "France",
+  "Gender": "Female",
+  "Age": 42,
+  "Tenure": 2,
+  "Balance": 0,
+  "NumOfProducts": 1,
+  "HasCrCard": 1,
+  "IsActiveMember": 1,
+  "EstimatedSalary": 101348.88,
 }
 
 """
@@ -49,12 +42,14 @@ class ModelInference:
     Enhanced model inference class with comprehensive logging and error handling.
     """
     
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, use_spark: bool = False, spark: Optional[SparkSession] = None):
         """
         Initialize the model inference system.
         
         Args:
             model_path: Path to the trained model file
+            use_spark: Whether to use PySpark for preprocessing (default: False for single records)
+            spark: Optional SparkSession instance
             
         Raises:
             ValueError: If model_path is invalid
@@ -71,16 +66,21 @@ class ModelInference:
         self.model_path = model_path
         self.encoders = {}
         self.model = None
+        self.use_spark = use_spark
+        self.spark = spark if spark else (get_or_create_spark_session() if use_spark else None)
+        self.scaler = None  # Initialize scaler
+        self.scaler_params = None  # Initialize scaler parameters
         
         logger.info(f"Model Path: {model_path}")
+        logger.info(f"Processing Engine: {'PySpark' if use_spark else 'Pandas'}")
         
         try:
             # Load model and configurations
             self.load_model()
             self.binning_config = get_binning_config()
             self.encoding_config = get_encoding_config()
-            self.scaling_config = get_scaling_config()
-            self.columns = get_columns()
+            self.scaling_config = get_scaling_config()  # Load scaling config
+            
             logger.info("✓ Model inference system initialized successfully")
             logger.info(f"{'='*60}\n")
             
@@ -103,12 +103,35 @@ class ModelInference:
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
         
         try:
-            self.model = joblib.load(self.model_path)
-            file_size = os.path.getsize(self.model_path) / (1024**2)  # MB
+            import time
+            start_time = time.time()
             
-            logger.info(f"✓ Model loaded successfully:")
+            # Check if it's a PySpark model (directory) or scikit-learn model (file)
+            if os.path.isdir(self.model_path):
+                # PySpark model
+                logger.info("Detected PySpark model directory")
+                if not self.use_spark:
+                    # Initialize Spark session for PySpark model
+                    self.use_spark = True
+                    self.spark = get_or_create_spark_session()
+                
+                from pyspark.ml import PipelineModel
+                self.model = PipelineModel.load(self.model_path)
+                self.model_type = 'pyspark'
+                logger.info("✓ PySpark model loaded successfully")
+                
+            else:
+                # Scikit-learn model
+                logger.info("Detected scikit-learn model file")
+                self.model = joblib.load(self.model_path)
+                self.model_type = 'sklearn'
+                file_size = os.path.getsize(self.model_path) / (1024**2)  # MB
+                logger.info(f"  • File Size: {file_size:.2f} MB")
+                logger.info("✓ Scikit-learn model loaded successfully")
+            
+            load_time = time.time() - start_time
             logger.info(f"  • Model Type: {type(self.model).__name__}")
-            logger.info(f"  • File Size: {file_size:.2f} MB")
+            logger.info(f"  • Load Time: {load_time:.2f} seconds")
             
         except Exception as e:
             logger.error(f"✗ Failed to load model: {str(e)}")
@@ -158,6 +181,54 @@ class ModelInference:
         except Exception as e:
             logger.error(f"✗ Failed to load encoders: {str(e)}")
             raise
+    
+    def load_scalers(self, scalers_dir: str = 'artifacts/scale') -> None:
+        """
+        Load feature scalers from directory with validation and logging.
+        
+        Args:
+            scalers_dir: Directory containing scaler artifacts
+            
+        Raises:
+            FileNotFoundError: If scalers directory doesn't exist
+            Exception: For any loading errors
+        """
+        logger.info(f"\n{'='*50}")
+        logger.info("LOADING FEATURE SCALERS")
+        logger.info(f"{'='*50}")
+        logger.info(f"Scalers directory: {scalers_dir}")
+        
+        if not os.path.exists(scalers_dir):
+            logger.warning(f"⚠ Scalers directory not found: {scalers_dir}")
+            logger.info("  • Inference will proceed without feature scaling")
+            logger.info(f"{'='*50}\n")
+            return
+        
+        try:
+            # Load scaling metadata
+            metadata_path = os.path.join(scalers_dir, 'scaling_metadata.json')
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                    self.scaler_params = metadata.get('scaler_params', {})
+                    self.columns_to_scale = metadata.get('columns_to_scale', [])
+                    
+                logger.info(f"✓ Loaded scaler metadata for {len(self.scaler_params)} columns")
+                logger.info(f"  • Columns to scale: {self.columns_to_scale}")
+                logger.info(f"  • Scaling type: {metadata.get('scaling_type', 'unknown')}")
+                
+                # Log scaler parameters
+                for col, params in self.scaler_params.items():
+                    logger.info(f"  • {col}: min={params['original_min']:.2f}, max={params['original_max']:.2f}")
+            else:
+                logger.warning(f"⚠ Scaling metadata not found: {metadata_path}")
+                
+            logger.info(f"✓ Scaler loading completed")
+            logger.info(f"{'='*50}\n")
+            
+        except Exception as e:
+            logger.error(f"✗ Failed to load scalers: {str(e)}")
+            raise
 
     def preprocess_input(self, data: Dict[str, Any]) -> pd.DataFrame:
         """
@@ -187,67 +258,166 @@ class ModelInference:
             logger.info(f"✓ Input data converted to DataFrame: {df.shape}")
             logger.info(f"  • Input features: {list(df.columns)}")
             
-            # Apply feature binning
-            logger.info("Applying feature binning...")
-            binning = CustomBinningStratergy(self.binning_config['tenure_bins'])
-            df = binning.bin_feature(df, 'tenure')
-
-            df = binning.bin_monthly_charges(df)
-
-            binning.service_count(df, self.binning_config['service_columns'])
-            binning.bundle_user(df, self.binning_config['bundle_columns'])
-            logging.info(f" Bundle Feature after binning: {df['Bundle_user'].iloc[0]}")
-            logger.info("Feature binning completed")
-
             # Apply encoders
             if self.encoders:
                 logger.info("Applying feature encoders...")
-
-                for col, encoder in self.encoders.items():
-                    if (col != 'Bundle_user' and col != 'Service_count' and col != 'SeniorCitizen' and col!=  'TotalCharges' and col != 'Churn' and col in df.columns):
+                for col, encoder_data in self.encoders.items():
+                    if col in df.columns:
                         original_value = df[col].iloc[0]
-                        df[col] = df[col].map(encoder)
-                        print(col)
-                        encoded_value = df[col].iloc[0]
-                        logger.info(f"  ✓ Encoded '{col}': {original_value} → {encoded_value}")
                         
+                        # Check if it's one-hot encoding or label encoding
+                        if isinstance(encoder_data, dict):
+                            if encoder_data.get('encoding_type') == 'one_hot':
+                                # Apply one-hot encoding
+                                categories = encoder_data.get('categories', [])
+                                logger.info(f"  ✓ One-hot encoding '{col}': {original_value} → {len(categories)} binary columns")
+                                
+                                # Create binary columns
+                                for category in categories:
+                                    new_col_name = f"{col}_{category}"
+                                    df[new_col_name] = (df[col] == category).astype(int)
+                                
+                                # Drop original column
+                                df = df.drop(columns=[col])
+                            else:
+                                # Label encoding
+                                mapping = encoder_data.get('mapping', encoder_data)
+                                df[col] = df[col].map(mapping)
+                                encoded_value = df[col].iloc[0]
+                                logger.info(f"  ✓ Label encoded '{col}': {original_value} → {encoded_value}")
+                        else:
+                            # Old format - assume label encoding
+                            df[col] = df[col].map(encoder_data)
+                            encoded_value = df[col].iloc[0]
+                            logger.info(f"  ✓ Encoded '{col}': {original_value} → {encoded_value}")
+                    else:
+                        logger.warning(f"  ⚠ Column '{col}' not found in input data")
             else:
                 logger.info("No encoders available - skipping encoding step")
 
-            
+            # Apply feature binning
+            if 'CreditScore' in df.columns:
+                logger.info("Applying feature binning for CreditScore...")
+                original_score = df['CreditScore'].iloc[0]
+                
+                ############### PANDAS CODES ###########################
+                # Create pandas-compatible binning logic for single records
+                def bin_credit_score(score):
+                    if score <= 580:
+                        return "Poor"
+                    elif score <= 669:
+                        return "Fair"
+                    elif score <= 739:
+                        return "Good"
+                    elif score <= 799:
+                        return "Very Good"
+                    else:
+                        return "Excellent"
+                
+                df['CreditScoreBins'] = df['CreditScore'].apply(bin_credit_score)
+                # CRITICAL: Keep CreditScore column - model expects both columns
+                # df = df.drop('CreditScore', axis=1)  # DO NOT DROP
+                
+                ############### PYSPARK CODES ###########################
+                # Note: For single record inference, pandas is more efficient
+                # PySpark binning would be used for batch processing
+                
+                binned_score = df['CreditScoreBins'].iloc[0]
+                logger.info(f"  ✓ CreditScore binned: {original_score} → {binned_score}")
+            else:
+                logger.warning("  ⚠ CreditScore not found - skipping binning")
 
             # Apply ordinal encoding
-            # logger.info("Applying ordinal encoding...")
-            # ordinal_strategy = OrdinalEncodingStratergy(self.encoding_config['ordinal_mappings'])
-            # df = ordinal_strategy.encode(df)
-            # logger.info("  ✓ Ordinal encoding applied")
+            if 'CreditScoreBins' in df.columns:
+                logger.info("Applying ordinal encoding for CreditScoreBins...")
+                
+                ############### PANDAS CODES ###########################
+                # Define ordinal mapping for credit score bins
+                ordinal_mapping = {
+                    'Poor': 0,
+                    'Fair': 1, 
+                    'Good': 2,
+                    'Very Good': 3,
+                    'Excellent': 4
+                }
+                original_value = df['CreditScoreBins'].iloc[0]
+                df['CreditScoreBins'] = df['CreditScoreBins'].map(ordinal_mapping)
+                
+                ############### PYSPARK CODES ###########################
+                # Note: For single record inference, pandas mapping is more efficient
+                # PySpark ordinal encoding would be used for batch processing
+                
+                encoded_value = df['CreditScoreBins'].iloc[0]
+                logger.info(f"  ✓ CreditScoreBins encoded: {original_value} → {encoded_value}")
+            else:
+                logger.warning("  ⚠ CreditScoreBins not found - skipping ordinal encoding")
 
-            # Feature scaling
-            logger.info("Applying feature transformation...")
-            standard_strategy = StandardScalingStratergy()
-            df = standard_strategy.transform(df,self.scaling_config['columns_to_transform'])
-            
-            logger.info("Applying feature scaling...")
-            df = standard_strategy.scale(df, self.scaling_config['columns_to_scale'])
-            logger.info("✓ Feature scaling completed")
-            
-            # Post-processing
-            drop_columns = self.columns['drop_columns']
+            # Apply feature scaling
+            if self.scaler_params and self.columns_to_scale:
+                logger.info("Applying feature scaling...")
+                for col in self.columns_to_scale:
+                    if col in df.columns:
+                        if col in self.scaler_params:
+                            params = self.scaler_params[col]
+                            original_value = df[col].iloc[0]
+                            
+                            # Apply min-max scaling: (x - min) / (max - min)
+                            min_val = params['original_min']
+                            max_val = params['original_max']
+                            
+                            if max_val > min_val:
+                                scaled_value = (original_value - min_val) / (max_val - min_val)
+                                df[col] = scaled_value
+                                logger.info(f"  ✓ Transformed '{col}': {original_value} → {scaled_value:.4f}")
+                            else:
+                                logger.warning(f"  ⚠ Invalid scaling range for '{col}': min={min_val}, max={max_val}")
+                        else:
+                            logger.warning(f"  ⚠ No scaling parameters found for '{col}'")
+                    else:
+                        logger.warning(f"  ⚠ Column '{col}' not found for scaling")
+            else:
+                logger.info("No scalers available - skipping scaling step")
+
+            # Drop unnecessary columns
+            drop_columns = ['RowNumber', 'CustomerId', 'Firstname', 'Lastname']
             existing_drop_columns = [col for col in drop_columns if col in df.columns]
+            
             if existing_drop_columns:
                 df = df.drop(columns=existing_drop_columns)
-                logger.info(f"✓ Dropped columns: {existing_drop_columns}")
-        
-            # # Drop unnecessary columns
-            # drop_columns = ['RowNumber', 'CustomerId', 'Firstname', 'Lastname']
-            # existing_drop_columns = [col for col in drop_columns if col in df.columns]
+                logger.info(f"  ✓ Dropped columns: {existing_drop_columns}")
             
-            # if existing_drop_columns:
-            #     df = df.drop(columns=existing_drop_columns)
-            #     logger.info(f"  ✓ Dropped columns: {existing_drop_columns}")
+            # Reorder columns to match training data
+            expected_columns = None
+
+            # If using a PySpark model, try to infer the exact assembler input columns
+            try:
+                if getattr(self, 'model_type', None) == 'pyspark' and hasattr(self, 'model'):
+                    for stage in getattr(self.model, 'stages', []) or []:
+                        if hasattr(stage, 'getInputCols'):
+                            expected_columns = list(stage.getInputCols())
+                            logger.info(f"  • Inferred assembler input columns from model: {len(expected_columns)} columns")
+                            break
+            except Exception as _:
+                expected_columns = None
+
+            # Fallback: use whatever columns are present after preprocessing
+            if expected_columns is None:
+                expected_columns = list(df.columns)
+
+            # Check if all expected columns are present
+            missing_columns = [col for col in expected_columns if col not in df.columns]
+            if missing_columns:
+                logger.warning(f"  ⚠ Missing columns required by model: {missing_columns}")
+                # Create missing columns with default zeros to allow model to run
+                for col in missing_columns:
+                    df[col] = 0
+
+            # Reorder columns to match training order
+            available_columns = [col for col in expected_columns if col in df.columns]
+            df = df[available_columns]
             
             logger.info(f"✓ Preprocessing completed - Final shape: {df.shape}")
-            logger.info(f"  • Final features: {list(df.columns)}")
+            logger.info(f"  • Final features (reordered): {list(df.columns)}")
             logger.info(f"{'='*50}\n")
             
             return df
@@ -286,14 +456,29 @@ class ModelInference:
             # Preprocess input data
             processed_data = self.preprocess_input(data)
             
-            # Make prediction
+            # Make prediction based on model type
             logger.info("Generating predictions...")
-            y_pred = self.model.predict(processed_data)
-            y_proba = self.model.predict_proba(processed_data)[:, 1]
             
-            # Process results
-            prediction = int(y_pred[0])
-            probability = float(y_proba[0])
+            if hasattr(self, 'model_type') and self.model_type == 'pyspark':
+                # PySpark model prediction
+                spark_df = self.spark.createDataFrame(processed_data)
+                predictions = self.model.transform(spark_df)
+                
+                # Get prediction and probability
+                prediction_row = predictions.select("prediction", "probability").collect()[0]
+                prediction = int(prediction_row.prediction)
+                
+                # Extract probability for positive class (index 1)
+                probability_vector = prediction_row.probability
+                probability = float(probability_vector[1])
+                
+            else:
+                # Scikit-learn model prediction
+                y_pred = self.model.predict(processed_data)
+                y_proba = self.model.predict_proba(processed_data)[:, 1]
+                
+                prediction = int(y_pred[0])
+                probability = float(y_proba[0])
             
             status = 'Churn' if prediction == 1 else 'Retain'
             confidence = round(probability * 100, 2)
@@ -315,4 +500,3 @@ class ModelInference:
         except Exception as e:
             logger.error(f"✗ Prediction failed: {str(e)}")
             raise
-
