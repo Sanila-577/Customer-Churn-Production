@@ -210,16 +210,22 @@ class ModelInference:
             if os.path.exists(metadata_path):
                 with open(metadata_path, 'r') as f:
                     metadata = json.load(f)
+                    self.scaling_type = metadata.get('scaling_type', 'standard')
                     self.scaler_params = metadata.get('scaler_params', {})
                     self.columns_to_scale = metadata.get('columns_to_scale', [])
                     
                 logger.info(f"✓ Loaded scaler metadata for {len(self.scaler_params)} columns")
                 logger.info(f"  • Columns to scale: {self.columns_to_scale}")
-                logger.info(f"  • Scaling type: {metadata.get('scaling_type', 'unknown')}")
+                logger.info(f"  • Scaling type: {self.scaling_type}")
                 
                 # Log scaler parameters
                 for col, params in self.scaler_params.items():
-                    logger.info(f"  • {col}: min={params['original_min']:.2f}, max={params['original_max']:.2f}")
+                    if self.scaling_type == 'standard':
+                        logger.info(
+                            f"  • {col}: mean={params['mean']:.4f}, std={params['std']:.4f}"
+                        )
+                    else:
+                        logger.info(f"  • {col}: min={params['original_min']:.2f}, max={params['original_max']:.2f}")
             else:
                 logger.warning(f"⚠ Scaling metadata not found: {metadata_path}")
                 
@@ -360,17 +366,27 @@ class ModelInference:
                         if col in self.scaler_params:
                             params = self.scaler_params[col]
                             original_value = df[col].iloc[0]
-                            
-                            # Apply min-max scaling: (x - min) / (max - min)
-                            min_val = params['original_min']
-                            max_val = params['original_max']
-                            
-                            if max_val > min_val:
-                                scaled_value = (original_value - min_val) / (max_val - min_val)
-                                df[col] = scaled_value
-                                logger.info(f"  ✓ Transformed '{col}': {original_value} → {scaled_value:.4f}")
+
+                            if getattr(self, 'scaling_type', 'standard') == 'standard':
+                                std_val = params.get('std', 0)
+                                mean_val = params.get('mean', 0)
+                                if std_val:
+                                    scaled_value = (original_value - mean_val) / std_val
+                                    df[col] = scaled_value
+                                    logger.info(f"  ✓ Transformed '{col}': {original_value} → {scaled_value:.4f}")
+                                else:
+                                    logger.warning(f"  ⚠ Invalid scaling std for '{col}': std={std_val}")
                             else:
-                                logger.warning(f"  ⚠ Invalid scaling range for '{col}': min={min_val}, max={max_val}")
+                                # Apply min-max scaling: (x - min) / (max - min)
+                                min_val = params['original_min']
+                                max_val = params['original_max']
+
+                                if max_val > min_val:
+                                    scaled_value = (original_value - min_val) / (max_val - min_val)
+                                    df[col] = scaled_value
+                                    logger.info(f"  ✓ Transformed '{col}': {original_value} → {scaled_value:.4f}")
+                                else:
+                                    logger.warning(f"  ⚠ Invalid scaling range for '{col}': min={min_val}, max={max_val}")
                         else:
                             logger.warning(f"  ⚠ No scaling parameters found for '{col}'")
                     else:

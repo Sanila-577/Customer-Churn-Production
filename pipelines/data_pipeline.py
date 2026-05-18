@@ -361,10 +361,12 @@ def data_pipeline(
         x_test_path = os.path.join('artifacts', 'data', 'X_test.csv')
         y_train_path = os.path.join('artifacts', 'data', 'Y_train.csv')
         y_test_path = os.path.join('artifacts', 'data', 'Y_test.csv')
+        scaling_metadata_path = os.path.join('artifacts', 'scale', 'scaling_metadata.json')
         
         artifacts_exist = all(os.path.exists(p) for p in [x_train_path, x_test_path, y_train_path, y_test_path])
+        scaler_artifacts_exist = os.path.exists(scaling_metadata_path)
         
-        if artifacts_exist and not force_rebuild:
+        if artifacts_exist and scaler_artifacts_exist and not force_rebuild:
             logger.info("✓ Loading existing processed data artifacts")
             X_train = pd.read_csv(x_train_path)
             X_test = pd.read_csv(x_test_path)
@@ -571,6 +573,7 @@ def data_pipeline(
             X_test,
             scaling_config['columns_to_scale']
         )
+        standard_strategy.save_scalers(scaling_config['columns_to_scale'], save_dir='artifacts/scale')
         logger.info("✓ Feature scaling completed")
         
         output_paths = save_processed_data(X_train_scaled, X_test_scaled, Y_train, Y_test, output_format)

@@ -417,6 +417,41 @@ class StandardScalingStrategy(FeatureScalingStrategy):
         logger.info(f"{'='*60}\n")
         return train_scaled, test_scaled
 
+    def save_scalers(self, columns_to_scale: List[str], save_dir: str = 'artifacts/scale') -> bool:
+        """Save fitted standard scaler metadata for inference."""
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+
+            metadata = {
+                'columns_to_scale': columns_to_scale,
+                'n_features': len(columns_to_scale),
+                'scaling_type': 'standard',
+                'framework': 'pyspark',
+                'scaler_params': {}
+            }
+
+            for col, scaler_model in self.scaler_models.items():
+                if hasattr(scaler_model, 'mean') and hasattr(scaler_model, 'std'):
+                    metadata['scaler_params'][col] = {
+                        'mean': float(scaler_model.mean[0]),
+                        'std': float(scaler_model.std[0]),
+                        'with_mean': self.with_mean,
+                        'with_std': self.with_std,
+                    }
+                    logger.info(
+                        f"  • Saved scaler params for {col}: mean={float(scaler_model.mean[0]):.4f}, std={float(scaler_model.std[0]):.4f}"
+                    )
+
+            metadata_path = os.path.join(save_dir, 'scaling_metadata.json')
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+            logger.info(f"✓ Scaler artifacts saved to: {save_dir}")
+            return True
+        except Exception as e:
+            logger.error(f"✗ Failed to save scaler artifacts: {str(e)}")
+            return False
+
     def _apply_scale_model(
         self,
         df: DataFrame,
