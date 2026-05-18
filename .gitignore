@@ -90,3 +90,9 @@ data/*.db
 # Backup and temporary files
 *~
 *.swp
+
+# Airflow local runtime state
+.airflow/
+airflow-webserver.pid
+airflow-scheduler.pid
+airflow-triggerer.pid
