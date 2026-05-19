@@ -355,3 +355,53 @@ This enhanced MLflow tracking system provides:
 The implementation follows clean architecture principles with separation of concerns and comprehensive observability for production ML systems.
 
 ---
+
+## ☁️ Airflow Integration
+
+This project includes Airflow DAGs for orchestrating the pipelines (see `dags/`). When Airflow is initialized the DAG files are copied into `.airflow/dags/`.
+
+- Web UI: http://localhost:8080 (login: `admin` / `admin` after initialization)
+
+Use the provided `Makefile` targets (run from the repository root) to initialize, start, and interact with Airflow:
+
+```bash
+# Initialize Airflow (creates .airflow, DB, and admin user)
+make airflow-init
+
+# Start webserver + scheduler
+make airflow-start
+
+# Check Airflow health
+make airflow-health
+
+# Trigger DAGs (all or individually)
+make airflow-trigger-all
+make airflow-trigger-data-pipeline
+make airflow-trigger-training-pipeline
+make airflow-trigger-inference-pipeline
+
+# One-off DAG task run (local test)
+make airflow-test-data-pipeline
+make airflow-test-training-pipeline
+make airflow-test-inference-pipeline
+```
+
+Notes and troubleshooting:
+
+- The `Makefile` uses the project virtual environment at `.venv`. Activate it manually if needed:
+
+```bash
+source .venv/bin/activate
+```
+
+- To stop tracking local Airflow runtime files (for example `.airflow/airflow.db`) after updating `.gitignore`:
+
+```bash
+git rm -r --cached .airflow
+git add .
+git commit -m "Stop tracking Airflow runtime files"
+```
+
+- Ensure `make data-pipeline` has been run once so required artifacts (`artifacts/encode`, `artifacts/scale`, `artifacts/models`) exist before triggering DAGs that depend on them.
+
+If you want, I can add a small diagram or status badge showing Airflow/MLflow endpoints.
