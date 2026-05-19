@@ -1,4 +1,4 @@
-# Enhanced MLflow Artifact Tracking for ML Pipelines
+# Enhanced MLflow Artifact Tracking and Airflow Orchestration for ML Pipelines
 
 This project demonstrates production-ready machine learning pipelines with comprehensive MLflow artifact tracking, focusing on customer churn prediction.
 
@@ -403,5 +403,3 @@ git commit -m "Stop tracking Airflow runtime files"
 ```
 
 - Ensure `make data-pipeline` has been run once so required artifacts (`artifacts/encode`, `artifacts/scale`, `artifacts/models`) exist before triggering DAGs that depend on them.
-
-If you want, I can add a small diagram or status badge showing Airflow/MLflow endpoints.
