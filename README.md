@@ -4,23 +4,12 @@ This project demonstrates production-ready machine learning pipelines with compr
 
 <img width="1505" height="517" alt="Screenshot 2026-05-19 at 08 58 44" src="https://github.com/user-attachments/assets/d669bf9b-69a3-414f-85e5-588c4e85f31e" />
 
-
 <img width="1363" height="681" alt="image" src="https://github.com/user-attachments/assets/2f02ee9c-61f2-4d7c-8c15-bb930089fa5e" />
-
-
-
-
-
-
-
-
-
-
-
 
 ## 🎯 Project Overview
 
 A complete ML system with enhanced MLflow tracking that provides:
+
 - **Comprehensive Data Lineage**: Track data from raw input to final model predictions
 - **Rich Artifact Management**: Automated logging of datasets, models, visualizations, and metadata
 - **Production-Ready Monitoring**: Real-time inference tracking and performance monitoring
@@ -100,16 +89,19 @@ A complete ML system with enhanced MLflow tracking that provides:
 ### 1. **Enhanced Data Pipeline** (`pipelines/data_pipeline.py`)
 
 #### **📊 Comprehensive Data Profiling**
+
 - **Stage-wise Tracking**: Profiles data at each processing stage (raw → missing_handled → outliers_removed → encoded → final)
 - **Rich Visualizations**: Automatic generation of distribution plots, correlation matrices
 - **Dataset Artifacts**: Proper MLflow dataset tracking with lineage and versioning
 
 #### **🔍 Data Quality Monitoring**
+
 - **Metrics Tracking**: Rows, columns, missing values, memory usage at each stage
 - **Transformation Logging**: Before/after metrics for each transformation step
 - **Error Handling**: Graceful handling of processing failures with detailed logging
 
 #### **📁 Artifact Management**
+
 ```python
 # Example: Data profiling and visualization
 create_data_visualizations(df, 'raw', run_artifacts_dir)
@@ -123,11 +115,13 @@ mlflow.log_input(raw_dataset, context="raw_data")
 ### 2. **Enhanced Training Pipeline** (`pipelines/training_pipeline.py`)
 
 #### **🎯 Model Performance Tracking**
+
 - **Comprehensive Visualizations**: Confusion matrices, ROC curves, feature importance plots
 - **Training Metadata**: Training time, model size, complexity metrics
 - **Performance Analytics**: Detailed model performance analysis and comparison
 
 #### **📈 Model Artifacts**
+
 ```python
 # Example: Model performance visualization
 create_model_performance_visualizations(model, X_test, y_test, evaluation_results, 
@@ -140,11 +134,13 @@ log_model_metadata(model, 'XGboost', model_params, training_time, run_artifacts_
 ### 3. **Enhanced Inference Pipeline** (`pipelines/streaming_inference_pipeline.py`)
 
 #### **⚡ Real-time Monitoring**
+
 - **Batch Processing**: Configurable batch sizes for efficient logging (default: 100 predictions)
 - **Performance Tracking**: Inference time, prediction distributions, risk categorization
 - **Production Monitoring**: Real-time model performance metrics
 
 #### **📊 Prediction Analytics**
+
 ```python
 # Example: Inference tracking
 class InferenceTracker:
@@ -156,6 +152,7 @@ class InferenceTracker:
 ## 🛠️ MLflow Artifacts Generated
 
 ### **Data Pipeline Artifacts**
+
 ```
 MLflow Run Artifacts:
 ├── raw_data/                         # Original dataset
@@ -171,6 +168,7 @@ MLflow Run Artifacts:
 ```
 
 ### **Training Pipeline Artifacts**
+
 ```
 MLflow Run Artifacts:
 ├── model_performance/                # Model performance analysis
@@ -188,6 +186,7 @@ MLflow Run Artifacts:
 ```
 
 ### **Inference Pipeline Artifacts**
+
 ```
 MLflow Run Artifacts:
 ├── inference_batches/                # Prediction batch logs
@@ -199,11 +198,13 @@ MLflow Run Artifacts:
 ## 📊 MLflow Tracking Features
 
 ### **Dataset Tracking**
+
 - **MLflow Datasets**: Proper dataset versioning and lineage tracking
 - **Schema Evolution**: Automatic tracking of schema changes
 - **Data Lineage**: Complete traceability from raw data to final models
 
 ### **Metrics Logged**
+
 ```python
 # Data Pipeline Metrics
 - raw_rows, raw_columns, raw_missing_values, raw_memory_mb
@@ -222,6 +223,7 @@ MLflow Run Artifacts:
 ```
 
 ### **Parameters Logged**
+
 ```python
 # Pipeline Configuration
 - final_feature_names, preprocessing_steps, data_pipeline_version
@@ -236,6 +238,7 @@ MLflow Run Artifacts:
 ## 🚀 Getting Started
 
 ### **Prerequisites**
+
 ```powershell
 # Create a venv if you don't have one (script also creates venv when you run the install target):
 python -m venv venv
@@ -257,6 +260,7 @@ python -m pip install -r requirements.txt
 > The repository provides a PowerShell helper `make.ps1` with targets that activate the venv when present and run the pipelines.
 
 #### **1. Data Pipeline**
+
 ```powershell
 # Preferred (uses the script and venv activation if available)
 .\make.ps1 data-pipeline
@@ -266,6 +270,7 @@ python -m pipelines.data_pipeline
 ```
 
 #### **2. Training Pipeline**
+
 ```powershell
 .\make.ps1 train-pipeline
 # Or directly
@@ -273,6 +278,7 @@ python -m pipelines.training_pipeline
 ```
 
 #### **3. Inference Pipeline**
+
 ```powershell
 .\make.ps1 streaming-inference
 
@@ -280,6 +286,7 @@ python -m pipelines.streaming_inference_pipeline
 ```
 
 ### **MLflow UI**
+
 ```powershell
 # Use the script (it will try to activate the venv and launch MLflow)
 .\make.ps1 mlflow-ui
@@ -290,19 +297,23 @@ mlflow ui --backend-store-uri file:./mlruns --default-artifact-root ./artifacts 
 
 # Access at: http://127.0.0.1:5001
 ```
+
 ## 📈 Key Benefits
 
 ### **🔍 Enhanced Observability**
+
 - **Complete Lineage**: Track data and model lineage from raw input to predictions
 - **Rich Visualizations**: Automatic generation of insightful plots and charts
 - **Comprehensive Metrics**: Detailed metrics at every pipeline stage
 
 ### **🚀 Production Ready**
+
 - **Error Handling**: Robust error handling with graceful degradation
-- **Monitoring**: Real-time inference monitoring and performance tracking  
+- **Monitoring**: Real-time inference monitoring and performance tracking
 - **Reproducibility**: Complete artifact tracking for experiment reproduction
 
 ### **⚡ Developer Experience**
+
 - **Automated Tracking**: Minimal code changes for maximum tracking benefit
 - **Rich Metadata**: Comprehensive metadata for all artifacts
 - **Easy Debugging**: Quick access to intermediate results and visualizations
@@ -311,15 +322,16 @@ mlflow ui --backend-store-uri file:./mlruns --default-artifact-root ./artifacts 
 
 The system is configured through `config.yaml`:
 
-
 ## 📊 Performance Optimizations
 
 ### **Code Efficiency**
+
 - **68% Code Reduction**: Optimized from ~950 lines to ~300 lines in data pipeline
 - **Consolidated Functions**: Streamlined helper functions for better maintainability
 - **Essential Visualizations**: Focus on most valuable plots and metrics
 
 ### **Resource Management**
+
 - **Memory Efficient**: Efficient handling of large datasets with cleanup
 - **Batch Processing**: Configurable batch sizes for inference tracking
 - **Error Recovery**: Graceful fallbacks when artifact logging fails
@@ -327,19 +339,19 @@ The system is configured through `config.yaml`:
 ## 🎯 Future Enhancements
 
 - **Data Drift Detection**: Monitor for data drift in production
-- **Model Registry Management**: Automated model stage transitions  
+- **Model Registry Management**: Automated model stage transitions
 - **Advanced Monitoring**: Additional performance and quality metrics
 - **Integration Testing**: Comprehensive pipeline testing framework
 
 ## 📝 Development Notes
 
 This enhanced MLflow tracking system provides:
+
 - **Production-grade logging** throughout all modules
-- **Comprehensive error handling** and input validation  
+- **Comprehensive error handling** and input validation
 - **Enhanced type safety** and documentation
 - **Complete artifact traceability** for ML operations
 
 The implementation follows clean architecture principles with separation of concerns and comprehensive observability for production ML systems.
 
 ---
-
