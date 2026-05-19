@@ -25,7 +25,7 @@ Validate Processed Data -> Run Train Pipeline Task
 """
 
 default_arguments = {
-                    'owner' : 'airflow-team',
+                    'owner' : 'sanila wijesekara',
                     'depends_on_past' : False,
                     'start_date': timezone.datetime(2026, 5, 10, 0, 0),
                     'email_on_failure': False,
