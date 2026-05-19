@@ -2,6 +2,7 @@
 
 This project demonstrates production-ready machine learning pipelines with comprehensive MLflow artifact tracking, focusing on customer churn prediction.
 
+<img width="1505" height="517" alt="Screenshot 2026-05-19 at 08 58 44" src="https://github.com/user-attachments/assets/d669bf9b-69a3-414f-85e5-588c4e85f31e" />
 
 
 <img width="1363" height="681" alt="image" src="https://github.com/user-attachments/assets/2f02ee9c-61f2-4d7c-8c15-bb930089fa5e" />
