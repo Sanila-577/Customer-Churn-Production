@@ -100,10 +100,10 @@ class MLKafkaProducer:
         topic = cfg.get('topics', {}).get('raw_input', 'telco.raw.customers')
         return create_topic(topic, partitions=1, replication_factor=1)
     
-    def produce_batch(self, topic: str = 'churn_predictions', num_events: int = 100) -> int:
+    def produce_batch(self, topic: str | None = None, num_events: int = 100) -> int:
         """Produce batch of events"""
         # Use configured default topic when not provided
-        if topic == 'churn_predictions':
+        if topic is None:
             topic = load_config().get('kafka', {}).get('producer', {}).get('default_topic', 'telco.raw.customers')
         events = self.generator.generate_batch(num_events)
         successful = 0
@@ -124,7 +124,7 @@ class MLKafkaProducer:
             print(f"Batch completed: {successful}/{num_events} events sent")
 
     
-    def produce_stream(self, topic: str = 'churn_predictions', 
+    def produce_stream(self, topic: str | None = None, 
                       rate: int = 1, duration: int = 300) -> int:
         """Produce streaming events""" # For Micro Batches
         
@@ -133,7 +133,7 @@ class MLKafkaProducer:
         successful = 0
 
         # Resolve default topic from config
-        if topic == 'churn_predictions':
+        if topic is None:
             topic = load_config().get('kafka', {}).get('producer', {}).get('default_topic', 'telco.raw.customers')
 
         try:

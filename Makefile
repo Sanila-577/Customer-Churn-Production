@@ -122,10 +122,12 @@ kafka-topics:
 		echo "💡 Please start broker with 'make kafka-start' in another terminal"; \
 		exit 1; \
 	fi
-	@echo "🔮 Creating churn_predictions topic..."
-	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic churn_predictions --partitions 1 --replication-factor 1 --if-not-exists
-	@echo "🔮 Creating churn_predictions_scored topic..."
-	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic churn_predictions_scored --partitions 1 --replication-factor 1 --if-not-exists
+	@echo "🔮 Creating telco.raw.customers topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic telco.raw.customers --partitions 1 --replication-factor 1 --if-not-exists
+	@echo "🔮 Creating telco.churn.predictions topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic telco.churn.predictions --partitions 1 --replication-factor 1 --if-not-exists
+	@echo "🔮 Creating telco.deadletter topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic telco.deadletter --partitions 1 --replication-factor 1 --if-not-exists
 	@echo "✅ Churn predictions topics created successfully"
 	@echo "📋 Current topics on native broker:"
 	@kafka-topics.sh --bootstrap-server localhost:9092 --list
@@ -183,20 +185,20 @@ kafka-check:
 	
 kafka-sample-scored:
 	@echo "📊 Analyzing churn prediction results..."
-	@if kafka-topics.sh --bootstrap-server localhost:9092 --list | grep -q churn_predictions_scored; then \
+	@if kafka-topics.sh --bootstrap-server localhost:9092 --list | grep -q telco.churn.predictions; then \
 		$(VENV_PY) scripts/kafka_analytics.py; \
 	else \
-		echo "❌ churn_predictions_scored topic not found. Run 'make kafka-topics' first."; \
+		echo "❌ telco.churn.predictions topic not found. Run 'make kafka-topics' first."; \
 	fi
 
-kafka-cleanup-topics:
+	kafka-cleanup-topics:
 	@echo "🧹 Cleaning up unused Kafka topics..."
 	@if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
 		echo "❌ Cannot connect to native Kafka broker"; \
 		echo "💡 Please start broker with 'make kafka-start'"; \
 		exit 1; \
 	fi
-	@echo "Removing unused topics (keeping only churn_predictions)..."
+	@echo "Removing unused topics (keeping only telco.raw.customers / telco.churn.predictions)..."
 	@for topic in customer_events model_updates data_quality_alerts; do \
 		if kafka-topics.sh --bootstrap-server localhost:9092 --list | grep -q "$$topic"; then \
 			echo "🗑️ Deleting topic: $$topic"; \
@@ -217,13 +219,15 @@ kafka-flush-messages:
 		exit 1; \
 	fi
 	@echo "Deleting and recreating topics to flush all messages..."
-	@kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic churn_predictions 2>/dev/null || echo "Topic churn_predictions not found"
-	@kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic churn_predictions_scored 2>/dev/null || echo "Topic churn_predictions_scored not found"
+	@kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic telco.raw.customers 2>/dev/null || echo "Topic telco.raw.customers not found"
+	@kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic telco.churn.predictions 2>/dev/null || echo "Topic telco.churn.predictions not found"
 	@sleep 2
-	@echo "🔮 Creating churn_predictions topic..."
-	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic churn_predictions --partitions 1 --replication-factor 1
-	@echo "🔮 Creating churn_predictions_scored topic..."
-	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic churn_predictions_scored --partitions 1 --replication-factor 1
+	@echo "🔮 Creating telco.raw.customers topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic telco.raw.customers --partitions 1 --replication-factor 1
+	@echo "🔮 Creating telco.churn.predictions topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic telco.churn.predictions --partitions 1 --replication-factor 1
+	@echo "🔮 Creating telco.deadletter topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic telco.deadletter --partitions 1 --replication-factor 1
 	@echo "✅ All messages flushed - topics are now empty"
 	@echo "📋 Current topics:"
 	@kafka-topics.sh --bootstrap-server localhost:9092 --list
