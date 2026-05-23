@@ -238,6 +238,22 @@ pipeline:
   inference_pipeline_name: inference_pipeline
   training_pipeline_name: model_training_pipeline
 training:
+  # Kafka integration settings (added per project extension)
+kafka:
+  bootstrap_servers: "localhost:9092"
+  topics:
+    raw_input: "telco.raw.customers"
+    predictions_output: "telco.churn.predictions"
+    deadletter: "telco.deadletter"
+  producer:
+    default_topic: "telco.raw.customers"
+    events_per_sec: 1
+    duration_secs: 300
+  consumer:
+    input_topic: "telco.raw.customers"
+    output_topic: "telco.churn.predictions"
+    group_id: "ml_consumer_group"
+
   cv_folds: 5
   default_model_type: logistic_regression
   default_training_strategy: cv
