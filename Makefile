@@ -9,6 +9,7 @@ AIRFLOW := $(VENV_PY) -m airflow
 MLFLOW_PORT ?= 5001
 
 .PHONY: help install clean data-pipeline train-pipeline streaming-inference run-all mlflow-ui stop-all
+.PHONY: kafka-setup-topics kafka-producer-stream kafka-producer-batch kafka-consumer kafka-consumer-continuous kafka-analytics
 
 help:
 	@echo "Available targets:"
@@ -53,6 +54,36 @@ streaming-inference:
 	@echo "🚀 Running Streaming Inference..."
 	@$(VENV_PY) -m pipelines.streaming_inference_pipeline
 	@echo "✅ Inference pipeline completed"
+
+# -----------------------------
+# Kafka helper targets (from docs/HWLHplNEHU.pdf)
+# -----------------------------
+
+kafka-setup-topics:
+	@echo "🔧 Creating Kafka topics (uses config.yaml)..."
+	@$(VENV_PY) -c "from utils.kafka_utils import setup_ml_topics; import sys; sys.exit(0) if setup_ml_topics() else sys.exit(1)"
+	@echo "✅ Topics setup attempted"
+
+kafka-producer-stream:
+	@echo "🚚 Starting Kafka producer (streaming)..."
+	@$(VENV_PY) -m pipelines.producer --mode streaming
+
+kafka-producer-batch:
+	@echo "📦 Producing batch messages to Kafka..."
+	@$(VENV_PY) -m pipelines.producer --mode batch
+
+kafka-consumer:
+	@echo "🔁 Running Kafka consumer (batch mode) to process messages"
+	@$(VENV_PY) -m pipelines.consumer
+
+kafka-consumer-continuous:
+	@echo "🔄 Running Kafka consumer in continuous mode (Airflow backed)"
+	@$(VENV_PY) -m pipelines.consumer --continuous
+
+kafka-analytics:
+	@echo "📊 Running Kafka analytics script against scored topic"
+	@$(VENV_PY) scripts/kafka_analytics.py
+
 
 run-all: data-pipeline train-pipeline streaming-inference
 
