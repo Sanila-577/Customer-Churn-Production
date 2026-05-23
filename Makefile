@@ -9,7 +9,6 @@ AIRFLOW := $(VENV_PY) -m airflow
 MLFLOW_PORT ?= 5001
 
 .PHONY: help install clean data-pipeline train-pipeline streaming-inference run-all mlflow-ui stop-all
-.PHONY: kafka-setup-topics kafka-producer-stream kafka-producer-batch kafka-consumer kafka-consumer-continuous kafka-analytics
 
 help:
 	@echo "Available targets:"
@@ -55,36 +54,6 @@ streaming-inference:
 	@$(VENV_PY) -m pipelines.streaming_inference_pipeline
 	@echo "✅ Inference pipeline completed"
 
-# -----------------------------
-# Kafka helper targets (from docs/HWLHplNEHU.pdf)
-# -----------------------------
-
-kafka-setup-topics:
-	@echo "🔧 Creating Kafka topics (uses config.yaml)..."
-	@$(VENV_PY) -c "from utils.kafka_utils import setup_ml_topics; import sys; sys.exit(0) if setup_ml_topics() else sys.exit(1)"
-	@echo "✅ Topics setup attempted"
-
-kafka-producer-stream:
-	@echo "🚚 Starting Kafka producer (streaming)..."
-	@$(VENV_PY) -m pipelines.producer --mode streaming
-
-kafka-producer-batch:
-	@echo "📦 Producing batch messages to Kafka..."
-	@$(VENV_PY) -m pipelines.producer --mode batch
-
-kafka-consumer:
-	@echo "🔁 Running Kafka consumer (batch mode) to process messages"
-	@$(VENV_PY) -m pipelines.consumer
-
-kafka-consumer-continuous:
-	@echo "🔄 Running Kafka consumer in continuous mode (Airflow backed)"
-	@$(VENV_PY) -m pipelines.consumer --continuous
-
-kafka-analytics:
-	@echo "📊 Running Kafka analytics script against scored topic"
-	@$(VENV_PY) scripts/kafka_analytics.py
-
-
 run-all: data-pipeline train-pipeline streaming-inference
 
 mlflow-ui:
@@ -96,6 +65,220 @@ stop-all:
 	@echo "Stopping MLflow processes (if any)"
 	@pkill -f mlflow || true
 	@echo "✅ Stop attempted"
+
+# Configuration
+KAFKA_CONF := kafka/server.properties
+KAFKA_LOG_DIR := runtime/kafka-logs
+PID_DIR := runtime/pids
+
+kafka-format:
+	@echo "🔧 Formatting native Kafka storage (KRaft mode)..."
+	@if [ -z "$$KAFKA_HOME" ]; then \
+		echo "❌ KAFKA_HOME not set. Please install Kafka natively and set KAFKA_HOME"; \
+		echo "💡 Installation guide: README_KAFKA.md"; \
+		exit 1; \
+	fi
+	@echo "📁 Creating runtime directories..."
+	@mkdir -p runtime/kafka-logs runtime/pids
+	@echo "🔑 Generating cluster UUID..."
+	@CLUSTER_ID=$$($${KAFKA_HOME}/bin/kafka-storage.sh random-uuid); \
+	echo "Using Cluster ID: $$CLUSTER_ID"; \
+	$${KAFKA_HOME}/bin/kafka-storage.sh format -t $$CLUSTER_ID -c "$(KAFKA_CONF)"
+	@echo "✅ Native Kafka storage formatted successfully"
+
+kafka-start-bg:
+	@echo "🚀 Starting native Kafka broker in background..."
+	@if [ -z "$$KAFKA_HOME" ]; then \
+		echo "❌ KAFKA_HOME not set"; \
+		exit 1; \
+	fi
+	@mkdir -p $(PID_DIR)
+	@nohup $${KAFKA_HOME}/bin/kafka-server-start.sh "$(KAFKA_CONF)" > runtime/kafka.log 2>&1 & \
+	echo $$! > $(PID_DIR)/kafka.pid
+	@echo "✅ Kafka broker started in background (PID: $$(cat $(PID_DIR)/kafka.pid))"
+	@echo "📄 Logs: runtime/kafka.log"
+
+kafka-stop:
+	@echo "🛑 Stopping native Kafka broker..."
+	@if [ -z "$$KAFKA_HOME" ]; then \
+		echo "❌ KAFKA_HOME not set"; \
+		exit 1; \
+	fi
+	@if [ -f "$(PID_DIR)/kafka.pid" ]; then \
+		PID=$$(cat $(PID_DIR)/kafka.pid); \
+		echo "🔍 Found Kafka PID: $$PID"; \
+		kill $$PID || true; \
+		rm -f $(PID_DIR)/kafka.pid; \
+		echo "✅ Kafka broker stopped"; \
+	else \
+		echo "⚠️ PID file not found, trying graceful shutdown..."; \
+		$${KAFKA_HOME}/bin/kafka-server-stop.sh || true; \
+	fi
+
+kafka-topics:
+	@echo "📋 Creating churn prediction topics on native broker..."
+	@if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
+		echo "❌ Cannot connect to native Kafka broker at localhost:9092"; \
+		echo "💡 Please start broker with 'make kafka-start' in another terminal"; \
+		exit 1; \
+	fi
+	@echo "🔮 Creating churn_predictions topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic churn_predictions --partitions 1 --replication-factor 1 --if-not-exists
+	@echo "🔮 Creating churn_predictions_scored topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic churn_predictions_scored --partitions 1 --replication-factor 1 --if-not-exists
+	@echo "✅ Churn predictions topics created successfully"
+	@echo "📋 Current topics on native broker:"
+	@kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+kafka-producer-stream:
+	@echo "🌊 Starting Kafka streaming producer (real data sampling)..."
+	@if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
+		echo "❌ Cannot connect to native Kafka broker"; \
+		echo "💡 Please start broker with 'make kafka-start'"; \
+		exit 1; \
+	fi
+	@echo "🎯 Streaming real customer events to localhost:9092 (1 event/sec for 5 mins)"
+	@$(VENV_PY) -m pipelines.producer --mode streaming --rate 1 --duration 300
+
+
+kafka-producer-batch:
+	@echo "📦 Starting Kafka batch producer (real data sampling)..."
+	@if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
+		echo "❌ Cannot connect to native Kafka broker"; \
+		echo "💡 Please start broker with 'make kafka-start'"; \
+		exit 1; \
+	fi
+	@echo "📊 Batch processing 100 real customer events to localhost:9092"
+	@$(VENV_PY) -m pipelines.producer --mode batch --num-events 100
+
+kafka-consumer:
+	@echo "🌊 Starting Kafka batch consumer with ML predictions..."
+	@if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
+		echo "❌ Cannot connect to native Kafka broker"; \
+		echo "💡 Please start broker with 'make kafka-start'"; \
+		exit 1; \
+	fi
+	@echo "🎯 Processing messages in batches with ML predictions"
+	@$(VENV_PY) -m pipelines.consumer
+
+kafka-consumer-continuous:
+	@echo "🔄 Starting continuous Kafka consumer monitoring..."
+	@echo "📡 Monitoring for NEW messages (real-time ML processing)"
+	@echo "🛑 Press Ctrl+C to stop monitoring"
+	@$(VENV_PY) -m pipelines.consumer --continuous --poll-interval 5
+	
+kafka-check:
+	@echo "🔍 Checking native Kafka broker status..."
+	@if kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
+		echo "✅ Native Kafka broker is running at localhost:9092"; \
+		echo "📋 Available topics:"; \
+		kafka-topics.sh --bootstrap-server localhost:9092 --list; \
+		echo "📊 Broker information:"; \
+		kafka-broker-api-versions.sh --bootstrap-server localhost:9092 | head -1; \
+	else \
+		echo "❌ Cannot connect to native Kafka broker at localhost:9092"; \
+		echo "💡 Please start with 'make kafka-start' in another terminal"; \
+		echo "💡 Or check installation with 'make kafka-validate'"; \
+	fi
+	
+kafka-sample-scored:
+	@echo "📊 Analyzing churn prediction results..."
+	@if kafka-topics.sh --bootstrap-server localhost:9092 --list | grep -q churn_predictions_scored; then \
+		$(VENV_PY) scripts/kafka_analytics.py; \
+	else \
+		echo "❌ churn_predictions_scored topic not found. Run 'make kafka-topics' first."; \
+	fi
+
+kafka-cleanup-topics:
+	@echo "🧹 Cleaning up unused Kafka topics..."
+	@if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
+		echo "❌ Cannot connect to native Kafka broker"; \
+		echo "💡 Please start broker with 'make kafka-start'"; \
+		exit 1; \
+	fi
+	@echo "Removing unused topics (keeping only churn_predictions)..."
+	@for topic in customer_events model_updates data_quality_alerts; do \
+		if kafka-topics.sh --bootstrap-server localhost:9092 --list | grep -q "$$topic"; then \
+			echo "🗑️ Deleting topic: $$topic"; \
+			kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic "$$topic"; \
+		else \
+			echo "✅ Topic $$topic not found (already clean)"; \
+		fi; \
+	done
+	@echo "✅ Topic cleanup completed"
+	@echo "📋 Remaining topics:"
+	@kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+kafka-flush-messages:
+	@echo "🗑️ Flushing all messages from Kafka topics..."
+	@if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
+		echo "❌ Cannot connect to native Kafka broker"; \
+		echo "💡 Please start broker with 'make kafka-start'"; \
+		exit 1; \
+	fi
+	@echo "Deleting and recreating topics to flush all messages..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic churn_predictions 2>/dev/null || echo "Topic churn_predictions not found"
+	@kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic churn_predictions_scored 2>/dev/null || echo "Topic churn_predictions_scored not found"
+	@sleep 2
+	@echo "🔮 Creating churn_predictions topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic churn_predictions --partitions 1 --replication-factor 1
+	@echo "🔮 Creating churn_predictions_scored topic..."
+	@kafka-topics.sh --bootstrap-server localhost:9092 --create --topic churn_predictions_scored --partitions 1 --replication-factor 1
+	@echo "✅ All messages flushed - topics are now empty"
+	@echo "📋 Current topics:"
+	@kafka-topics.sh --bootstrap-server localhost:9092 --list
+
+kafka-reset:
+	@echo "🧹 Resetting Kafka data (destructive operation)..."
+	@read -p "⚠️ This will delete all Kafka data. Continue? (y/N): " confirm && [ "$$confirm" = "y" ]
+	@echo "🛑 Stopping all Kafka processes..."
+	@pkill -f kafka || echo "No Kafka processes found"
+	@sleep 2
+	@echo "🔧 Force killing port users..."
+	@lsof -ti:9092,9093 | xargs kill -9 2>/dev/null || echo "Ports already free"
+	@sleep 1
+	@echo "🗑️ Removing Kafka data directory..."
+	@rm -rf $(KAFKA_LOG_DIR)
+	@echo "🗑️ Removing PID files..."
+	@rm -f $(PID_DIR)/kafka.pid
+	@echo "✅ Kafka reset completed. Run 'make kafka-format' to reinitialize"
+
+kafka-help:
+	@echo "🔧 Native Kafka Commands Help"
+	@echo "=================================================="
+	@echo "Installation Commands:"
+	@echo "  kafka-install    - Install Kafka natively (first time)"
+	@echo "  kafka-validate   - Validate installation"
+	@echo ""
+	@echo "Setup Commands:"
+	@echo "  kafka-format     - Format Kafka storage (first time)"
+	@echo "  kafka-start      - Start native Kafka broker"
+	@echo "  kafka-start-bg   - Start broker in background"
+	@echo "  kafka-stop       - Stop native Kafka broker"
+	@echo "  kafka-topics     - Create churn prediction topic"
+	@echo "  kafka-cleanup-topics - Remove unused topics"
+	@echo ""
+	@echo "Data Commands:"
+	@echo "  kafka-producer-stream  - Start streaming producer (real data)"
+	@echo "  kafka-producer-batch   - Start batch producer (real data)"
+	@echo "  kafka-consumer         - Start batch ML consumer"
+	@echo "  kafka-consumer-continuous - Start continuous ML consumer"
+	@echo ""
+	@echo "Monitoring Commands:"
+	@echo "  kafka-check      - Check broker status"
+	@echo "  kafka-monitor    - Monitor cluster health"
+	@echo "  kafka-sample     - Sample input topic messages"
+	@echo "  kafka-sample-scored - Show prediction analytics & statistics"
+	@echo "  kafka-sample-raw - Sample raw scored messages"
+	@echo "  kafka-test-event-driven - Test event-driven DAG logic"
+	@echo ""
+	@echo "Utility Commands:"
+	@echo "  kafka-demo       - Show demo instructions"
+	@echo "  kafka-reset      - Reset all Kafka data"
+	@echo "  kafka-clean-restart - Complete cleanup and restart"
+	@echo "  kafka-help       - Show this help"
+	@echo ""
+	@echo "📚 For detailed setup: README_KAFKA.md"
 
 # ========================================================================================
 # APACHE AIRFLOW ORCHESTRATION TARGETS
