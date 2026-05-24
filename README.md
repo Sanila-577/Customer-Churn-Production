@@ -33,6 +33,8 @@ Airflow runs locally with the project-local metadata database in `.airflow/`. Th
 
 ### 3. Setup Kafka
 
+For Kafka installation and native KRaft setup steps, see [kafka/README.md](kafka/README.md).
+
 ```bash
 source setup_kafka_env.sh
 make kafka-format
