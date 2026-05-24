@@ -1,4 +1,4 @@
-# Telco Churn Prediction with Kafka and Airflow
+# Telco Churn Prediction with Kafka and Airflow with PySpark Analytics
 
 This project implements a telco churn prediction pipeline with local Apache Airflow orchestration, native Apache Kafka streaming, and PySpark-based model training and inference.
 
