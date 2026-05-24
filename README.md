@@ -2,6 +2,9 @@
 
 This project implements a telco churn prediction pipeline with local Apache Airflow orchestration, native Apache Kafka streaming, and PySpark-based model training and inference.
 
+<img width="1510" height="412" alt="Screenshot 2026-05-24 at 16 08 24" src="https://github.com/user-attachments/assets/f5c2c815-9314-4cde-8e9a-80b3658379b8" />
+
+
 ## Prerequisites
 
 - Python 3.9+
