@@ -149,7 +149,7 @@ def create_default_config() ->None:
     config_path = CONFIG_FILE
     if not os.path.exists(config_path):
         default_config = {'data': {'file_path':
-            'data/raw/ChurnModelling.csv', 'target_column': 'Exited',
+            'data/raw/TelcoCustomerChurn.csv', 'target_column': 'Churn',
             'test_size': 0.2, 'random_state': 42}, 'preprocessing': {
             'handle_missing_values': True, 'handle_outliers': True,
             'feature_binning': True, 'feature_encoding': True,

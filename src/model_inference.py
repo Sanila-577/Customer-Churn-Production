@@ -10,32 +10,38 @@ from sklearn.base import BaseEstimator
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 from src.spark_session import get_or_create_spark_session
-from spark_utils import spark_to_pandas
+from src.spark_utils import spark_to_pandas
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
-from config import get_binning_config, get_encoding_config, get_scaling_config
+from utils.config import get_binning_config, get_encoding_config, get_scaling_config
 logging.basicConfig(level=logging.INFO, format=
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-""" 
+"""
+Example Telco churn input:
 {
-  "RowNumber": 1,
-  "CustomerId": 15634602,
-  "Firstname": "Grace",
-  "Lastname": "Williams",
-  "CreditScore": 619,
-  "Geography": "France",
-  "Gender": "Female",
-  "Age": 42,
-  "Tenure": 2,
-  "Balance": 0,
-  "NumOfProducts": 1,
-  "HasCrCard": 1,
-  "IsActiveMember": 1,
-  "EstimatedSalary": 101348.88,
+    "customerID": "7590-VHVEG",
+    "gender": "Female",
+    "SeniorCitizen": 0,
+    "Partner": "Yes",
+    "Dependents": "No",
+    "tenure": 1,
+    "PhoneService": "No",
+    "MultipleLines": "No phone service",
+    "InternetService": "DSL",
+    "OnlineSecurity": "No",
+    "OnlineBackup": "Yes",
+    "DeviceProtection": "No",
+    "TechSupport": "No",
+    "StreamingTV": "No",
+    "StreamingMovies": "No",
+    "Contract": "Month-to-month",
+    "PaperlessBilling": "Yes",
+    "PaymentMethod": "Electronic check",
+    "MonthlyCharges": 29.85,
+    "TotalCharges": 29.85,
+    "Churn": "No"
 }
-
 """
 class ModelInference:
     """
@@ -301,63 +307,6 @@ class ModelInference:
             else:
                 logger.info("No encoders available - skipping encoding step")
 
-            # Apply feature binning
-            if 'CreditScore' in df.columns:
-                logger.info("Applying feature binning for CreditScore...")
-                original_score = df['CreditScore'].iloc[0]
-                
-                ############### PANDAS CODES ###########################
-                # Create pandas-compatible binning logic for single records
-                def bin_credit_score(score):
-                    if score <= 580:
-                        return "Poor"
-                    elif score <= 669:
-                        return "Fair"
-                    elif score <= 739:
-                        return "Good"
-                    elif score <= 799:
-                        return "Very Good"
-                    else:
-                        return "Excellent"
-                
-                df['CreditScoreBins'] = df['CreditScore'].apply(bin_credit_score)
-                # CRITICAL: Keep CreditScore column - model expects both columns
-                # df = df.drop('CreditScore', axis=1)  # DO NOT DROP
-                
-                ############### PYSPARK CODES ###########################
-                # Note: For single record inference, pandas is more efficient
-                # PySpark binning would be used for batch processing
-                
-                binned_score = df['CreditScoreBins'].iloc[0]
-                logger.info(f"  ✓ CreditScore binned: {original_score} → {binned_score}")
-            else:
-                logger.warning("  ⚠ CreditScore not found - skipping binning")
-
-            # Apply ordinal encoding
-            if 'CreditScoreBins' in df.columns:
-                logger.info("Applying ordinal encoding for CreditScoreBins...")
-                
-                ############### PANDAS CODES ###########################
-                # Define ordinal mapping for credit score bins
-                ordinal_mapping = {
-                    'Poor': 0,
-                    'Fair': 1, 
-                    'Good': 2,
-                    'Very Good': 3,
-                    'Excellent': 4
-                }
-                original_value = df['CreditScoreBins'].iloc[0]
-                df['CreditScoreBins'] = df['CreditScoreBins'].map(ordinal_mapping)
-                
-                ############### PYSPARK CODES ###########################
-                # Note: For single record inference, pandas mapping is more efficient
-                # PySpark ordinal encoding would be used for batch processing
-                
-                encoded_value = df['CreditScoreBins'].iloc[0]
-                logger.info(f"  ✓ CreditScoreBins encoded: {original_value} → {encoded_value}")
-            else:
-                logger.warning("  ⚠ CreditScoreBins not found - skipping ordinal encoding")
-
             # Apply feature scaling
             if self.scaler_params and self.columns_to_scale:
                 logger.info("Applying feature scaling...")
@@ -394,8 +343,8 @@ class ModelInference:
             else:
                 logger.info("No scalers available - skipping scaling step")
 
-            # Drop unnecessary columns
-            drop_columns = ['RowNumber', 'CustomerId', 'Firstname', 'Lastname']
+            # Drop identifiers and target columns that are not model features
+            drop_columns = ['customerID', 'Churn', 'event_id', 'event_timestamp', 'true_churn_label']
             existing_drop_columns = [col for col in drop_columns if col in df.columns]
             
             if existing_drop_columns:

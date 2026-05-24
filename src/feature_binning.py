@@ -255,13 +255,3 @@ class BucketizerBinningStrategy(FeatureBinningStrategy):
         logger.info(f"{'='*60}\n")
         
         return df_binned
-
-class CreditScoreBinningStrategy(BucketizerBinningStrategy):
-    """Specialized binning strategy for credit scores."""
-    
-    def __init__(self, spark: Optional[SparkSession] = None):
-        """Initialize credit score binning with predefined splits and labels."""
-        splits = [0, 450, 580, 680, 750, float('inf')]
-        labels = ["Poor", "Fair", "Good", "Very Good", "Excellent"]
-        super().__init__(splits=splits, labels=labels, handle_invalid="keep", spark=spark)
-        logger.info("CreditScoreBinningStrategy initialized with standard credit score bins")

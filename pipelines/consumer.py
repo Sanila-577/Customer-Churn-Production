@@ -74,21 +74,51 @@ class MLKafkaConsumer:
         """Extract and validate customer data"""
         # Handle nested structure
         customer_data = message_data.get('data', message_data)
+
+        def _to_int(value: Any, default: int = 0) -> int:
+            try:
+                if value is None or value == '':
+                    return default
+                return int(float(value))
+            except (TypeError, ValueError):
+                return default
+
+        def _to_float(value: Any, default: float = 0.0) -> float:
+            try:
+                if value is None:
+                    return default
+                if isinstance(value, str):
+                    cleaned = value.strip()
+                    if cleaned == '':
+                        return default
+                    return float(cleaned)
+                return float(value)
+            except (TypeError, ValueError):
+                return default
         
-        # Required fields with defaults
+        # Required fields with defaults for the Telco churn schema
         return {
-            'CustomerId': customer_data.get('CustomerId', 0),
-            'Geography': customer_data.get('Geography', 'Unknown'),
-            'Gender': customer_data.get('Gender', 'Unknown'),
-            'Age': customer_data.get('Age', 0),
-            'CreditScore': customer_data.get('CreditScore', 600),
-            'Balance': customer_data.get('Balance', 0.0),
-            'EstimatedSalary': customer_data.get('EstimatedSalary', 0.0),
-            'Tenure': customer_data.get('Tenure', 0),
-            'NumOfProducts': customer_data.get('NumOfProducts', 1),
-            'HasCrCard': customer_data.get('HasCrCard', 0),
-            'IsActiveMember': customer_data.get('IsActiveMember', 0),
-            'Exited': customer_data.get('Exited', 0)
+            'customerID': customer_data.get('customerID', customer_data.get('CustomerId', 'N/A')),
+            'gender': customer_data.get('gender', 'Unknown'),
+            'SeniorCitizen': _to_int(customer_data.get('SeniorCitizen', 0), 0),
+            'Partner': customer_data.get('Partner', 'No'),
+            'Dependents': customer_data.get('Dependents', 'No'),
+            'tenure': _to_int(customer_data.get('tenure', 0), 0),
+            'PhoneService': customer_data.get('PhoneService', 'No'),
+            'MultipleLines': customer_data.get('MultipleLines', 'No'),
+            'InternetService': customer_data.get('InternetService', 'No'),
+            'OnlineSecurity': customer_data.get('OnlineSecurity', 'No'),
+            'OnlineBackup': customer_data.get('OnlineBackup', 'No'),
+            'DeviceProtection': customer_data.get('DeviceProtection', 'No'),
+            'TechSupport': customer_data.get('TechSupport', 'No'),
+            'StreamingTV': customer_data.get('StreamingTV', 'No'),
+            'StreamingMovies': customer_data.get('StreamingMovies', 'No'),
+            'Contract': customer_data.get('Contract', 'Month-to-month'),
+            'PaperlessBilling': customer_data.get('PaperlessBilling', 'No'),
+            'PaymentMethod': customer_data.get('PaymentMethod', 'Electronic check'),
+            'MonthlyCharges': _to_float(customer_data.get('MonthlyCharges', 0.0), 0.0),
+            'TotalCharges': _to_float(customer_data.get('TotalCharges', 0.0), 0.0),
+            'Churn': customer_data.get('Churn', 'No')
         }
     
     def process_batch(self, max_messages: int = 1000, timeout: int = 10, 
@@ -104,11 +134,11 @@ class MLKafkaConsumer:
         try:
             from airflow.api.client.local_client import Client
             client = Client(None, None)
-            client.trigger_dag(dag_id='kafka_consumer_dag', run_id=None, conf={
+            client.trigger_dag(dag_id='kafka_batch_consumer_dag', run_id=None, conf={
                 'max_messages': max_messages,
                 'timeout': timeout
             })
-            logger.info("🚀 Triggered Airflow DAG: kafka_consumer_dag")
+            logger.info("🚀 Triggered Airflow DAG: kafka_batch_consumer_dag")
             return 0
         except Exception as e:
             logger.warning(f"⚠️ Airflow local client trigger failed: {e}")
@@ -116,11 +146,11 @@ class MLKafkaConsumer:
         # Try Airflow CLI
         try:
             conf = json.dumps({'max_messages': max_messages, 'timeout': timeout})
-            subprocess.run(["airflow", "dags", "trigger", "kafka_consumer_dag", "--conf", conf], check=True)
-            logger.info("🚀 Triggered Airflow DAG via CLI: kafka_consumer_dag")
+            subprocess.run(["airflow", "dags", "trigger", "kafka_batch_consumer_dag", "--conf", conf], check=True)
+            logger.info("🚀 Triggered Airflow DAG via CLI: kafka_batch_consumer_dag")
             return 0
         except Exception as e:
-            raise RuntimeError(f"Unable to trigger Airflow DAG kafka_consumer_dag: {e}")
+            raise RuntimeError(f"Unable to trigger Airflow DAG kafka_batch_consumer_dag: {e}")
 
     def _consume_messages(self, max_messages: int = 1000, timeout: int = 10, group_id: str = None):
         """Consume raw messages from Kafka and return list of parsed JSON payloads."""
@@ -165,24 +195,37 @@ class MLKafkaConsumer:
         logger.info(f"📥 Processing {len(messages)} messages with ML")
         producer = Producer({'bootstrap.servers': 'localhost:9092'})
         processed = 0
+        churn_predictions = 0
+        confidence_values = []
 
         print(f"\n📊 ML PREDICTIONS")
         print("=" * 70)
-        print("Status | Customer   | Location | Prediction | Confidence")
+        print("Status | Customer   | Gender   | Tenure | Monthly   | Prediction | Confidence")
         print("-" * 70)
 
         for i, message_data in enumerate(messages):
             try:
                 customer_data = self.extract_customer_data(message_data)
-                customer_id = customer_data.get('CustomerId', 'N/A')
-                geography = str(customer_data.get('Geography', 'N/A'))[:5]
+                prediction_input = {k: v for k, v in customer_data.items() if k != 'Churn'}
+                customer_id = customer_data.get('customerID', 'N/A')
+                gender = str(customer_data.get('gender', 'N/A'))[:8]
+                tenure = str(customer_data.get('tenure', 'N/A'))[:6]
+                monthly = str(customer_data.get('MonthlyCharges', 'N/A'))[:8]
 
-                prediction = self.model.predict(customer_data)
+                prediction = self.model.predict(prediction_input)
                 status = prediction.get('Status', 'Unknown')
                 confidence = prediction.get('Confidence', '0%')
 
+                try:
+                    confidence_values.append(float(str(confidence).replace('%', '')))
+                except Exception:
+                    pass
+
+                if 'Churn' in status:
+                    churn_predictions += 1
+
                 pred_emoji = "🟢" if 'Retain' in status else "🔴"
-                print(f"  {pred_emoji}   | {str(customer_id)[:8]:8s} | {geography:8s} | {status:10s} | {confidence:10s}")
+                print(f"  {pred_emoji}   | {str(customer_id)[:8]:8s} | {gender:8s} | {tenure:6s} | {monthly:9s} | {status:10s} | {confidence:10s}")
 
                 result = {
                     'customer_id': customer_id,
@@ -208,30 +251,62 @@ class MLKafkaConsumer:
 
         print("-" * 70)
         print(f"✅ Completed: {processed}/{len(messages)} predictions")
+        retain_predictions = max(0, processed - churn_predictions)
+        avg_conf = (sum(confidence_values) / len(confidence_values)) if confidence_values else 0.0
+        print(f"📊 Stats: churn={churn_predictions} | retain={retain_predictions} | avg_confidence={avg_conf:.1f}%")
         print("=" * 70)
 
         logger.info(f"🎉 Processed {processed} messages successfully")
         return processed
     
     def run_continuous(self, poll_interval: int = 3, show_progress: bool = True):
-        """Keep the process alive while Airflow handles scheduled consumption."""
-        logger.info("🔄 Starting Airflow-backed continuous consumer mode")
+        """Run local micro-batch consumption continuously with live inference logs."""
+        logger.info("🔄 Starting continuous local consumer mode")
         logger.info("🛑 Press Ctrl+C to stop")
 
-        self.process_batch(
-            max_messages=50,
-            timeout=poll_interval,
-            group_id='continuous_ml_consumer'
-        )
+        self._configure_airflow_environment()
+        airflow_trigger_available = False
+        try:
+            from utils.airflow_tasks import trigger_kafka_consumer_streaming_dag
+            airflow_trigger_available = True
+        except Exception as trigger_import_error:
+            logger.warning(f"⚠️ Streaming DAG trigger helper unavailable: {trigger_import_error}")
+            trigger_kafka_consumer_streaming_dag = None
 
-        if show_progress:
-            print("✅ Airflow DAG kafka_consumer_dag triggered. The scheduler will consume batches.")
+        cycle = 0
+        total_processed = 0
         
         try:
             while True:
-                if show_progress:
-                    print("⏳ Waiting for Airflow scheduler to run kafka_consumer_dag...")
-                time.sleep(poll_interval)
+                cycle += 1
+                messages = self._consume_messages(
+                    max_messages=50,
+                    timeout=poll_interval,
+                    # Prefix with 'batch_' so first run starts from earliest,
+                    # then continues from committed offsets in subsequent cycles.
+                    group_id='batch_continuous_ml_consumer'
+                )
+
+                if messages:
+                    if show_progress:
+                        print(f"\n🔄 Cycle {cycle}: processing {len(messages)} message(s)")
+                    processed = self._process_messages(messages)
+                    total_processed += processed
+                    if airflow_trigger_available and processed > 0:
+                        try:
+                            trigger_kafka_consumer_streaming_dag(
+                                cycle=cycle,
+                                processed_messages=processed,
+                                total_processed=total_processed,
+                                group_id='batch_continuous_ml_consumer',
+                            )
+                        except Exception as trigger_error:
+                            logger.error(f"❌ Failed to queue streaming DAG for cycle {cycle}: {str(trigger_error)}")
+                    if show_progress:
+                        print(f"📈 Continuous summary: cycle={cycle} | processed_this_cycle={processed} | total_processed={total_processed}")
+                else:
+                    if show_progress:
+                        print(f"⏳ Cycle {cycle}: no new messages")
                 
         except KeyboardInterrupt:
             logger.info("🛑 Continuous processing stopped")

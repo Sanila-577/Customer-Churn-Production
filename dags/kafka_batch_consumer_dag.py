@@ -14,7 +14,7 @@ def get_project_root() -> str:
 
 sys.path.insert(0, get_project_root())
 
-from pipelines.consumer import MLKafkaConsumer
+from utils.airflow_tasks import validate_trained_model, run_inference_pipeline
 
 default_arguments = {
     'owner': 'sanila wijesekara',
@@ -25,29 +25,26 @@ default_arguments = {
     'retries': 0,
 }
 
-def run_consumer_batch(**context):
-    # Parameters can be passed via dag run conf
-    conf = context.get('dag_run').conf if context.get('dag_run') else {}
-    max_messages = int(conf.get('max_messages', 1000))
-    timeout = int(conf.get('timeout', 10))
-
-    MLKafkaConsumer.run_kafka_consumer_batch(max_messages=max_messages, timeout=timeout)
-
 with DAG(
-    dag_id='kafka_consumer_dag',
+    dag_id='kafka_batch_consumer_dag',
     schedule_interval='0 * * * *',
     catchup=False,
     max_active_runs=1,
     default_args=default_arguments,
-    description='Kafka Consumer DAG - batch scoring',
-    tags=['kafka','streaming','ml']
+    description='Kafka Batch Inference DAG - scheduled inference',
+    tags=['kafka','inference','ml']
 ):
 
-    consume_and_score = PythonOperator(
-        task_id='consume_and_score',
-        python_callable=run_consumer_batch,
-        provide_context=True,
-        execution_timeout=timedelta(minutes=30)
+    validate_trained_model_task = PythonOperator(
+        task_id='validate_trained_model',
+        python_callable=validate_trained_model,
+        execution_timeout=timedelta(minutes=2)
     )
 
-    consume_and_score
+    run_inference_pipeline_task = PythonOperator(
+        task_id='run_inference_pipeline',
+        python_callable=run_inference_pipeline,
+        execution_timeout=timedelta(minutes=2)
+    )
+
+    validate_trained_model_task >> run_inference_pipeline_task

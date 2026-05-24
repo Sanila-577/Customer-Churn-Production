@@ -7,7 +7,9 @@ for Airflow DAGs, following best practices for production environments.
 
 import os
 import sys
+import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -15,7 +17,13 @@ from typing import Dict, Any, Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def validate_input_data(data_path: str = 'data/raw/ChurnModelling.csv') -> Dict[str, Any]:
+
+def _log_to_terminal(message: str) -> None:
+    """Write a message to both stdout and the Airflow/task logger."""
+    print(message, flush=True)
+    logger.info(message)
+
+def validate_input_data(data_path: str = 'data/raw/TelcoCustomerChurn.csv') -> Dict[str, Any]:
     """
     Lightweight validation that input data exists.
     
@@ -28,7 +36,7 @@ def validate_input_data(data_path: str = 'data/raw/ChurnModelling.csv') -> Dict[
     project_root = setup_project_environment()
     full_path = Path(project_root) / data_path
     
-    logger.info(f"Validating input data at: {full_path}")
+    _log_to_terminal(f"[airflow_tasks] Validating input data at: {full_path}")
     
     if not full_path.exists():
         logger.warning(f"Input data file not found: {full_path}")
@@ -48,7 +56,7 @@ def validate_input_data(data_path: str = 'data/raw/ChurnModelling.csv') -> Dict[
             'file_path': str(full_path)
         }
     
-    logger.info(f"✅ Input data validation passed: {file_size} bytes")
+    _log_to_terminal(f"✅ Input data validation passed: {file_size} bytes")
     
     return {
         'status': 'success',
@@ -70,7 +78,7 @@ def validate_processed_data(data_path: str = 'data/processed/imputed.csv') -> Di
     project_root = setup_project_environment()
     full_path = Path(project_root) / data_path
     
-    logger.info(f"Validating processed data at: {full_path}")
+    _log_to_terminal(f"[airflow_tasks] Validating processed data at: {full_path}")
     
     if not full_path.exists():
         logger.warning(f"Processed data file not found: {full_path}")
@@ -89,7 +97,7 @@ def validate_processed_data(data_path: str = 'data/processed/imputed.csv') -> Di
             'file_path': str(full_path)
         }
     
-    logger.info(f"✅ Processed data validation passed: {file_size} bytes")
+    _log_to_terminal(f"✅ Processed data validation passed: {file_size} bytes")
     
     return {
         'status': 'success',
@@ -111,7 +119,7 @@ def validate_trained_model(model_path: str = 'artifacts/models') -> Dict[str, An
     project_root = setup_project_environment()
     model_dir = Path(project_root) / model_path
     
-    logger.info(f"Validating trained model at: {model_dir}")
+    _log_to_terminal(f"[airflow_tasks] Validating trained model at: {model_dir}")
     
     if not model_dir.exists():
         logger.warning(f"Model directory not found: {model_dir}")
@@ -132,7 +140,7 @@ def validate_trained_model(model_path: str = 'artifacts/models') -> Dict[str, An
             'model_directory': str(model_dir)
         }
     
-    logger.info(f"✅ Model validation passed: {len(model_files)} file(s) found")
+    _log_to_terminal(f"✅ Model validation passed: {len(model_files)} file(s) found")
     
     return {
         'status': 'success',
@@ -207,7 +215,7 @@ def setup_project_environment() -> str:
     return str(project_root)
 
 def run_data_pipeline(
-                    data_path: str = 'data/raw/ChurnModelling.csv',
+                    data_path: str = 'data/raw/TelcoCustomerChurn.csv',
                     force_rebuild: bool = False,
                     output_format: str = 'both'
                     ) -> Dict[str, Any]:
@@ -227,21 +235,23 @@ def run_data_pipeline(
     try:
         # Change to project directory
         os.chdir(project_root)
+
+        _log_to_terminal(
+            f"[airflow_tasks] Starting data pipeline | data_path={data_path} | force_rebuild={force_rebuild} | output_format={output_format}"
+        )
         
         # Import and execute pipeline
         from pipelines.data_pipeline import data_pipeline
         
-        logger.info(f"Starting data pipeline: {data_path}")
-        
         result = data_pipeline(
-            data_path =  'data/raw/TelcoCustomerChurn.csv',
-            target_column =  'Churn',
-            test_size =  0.2,
-            force_rebuild = False,
-            output_format="both"
+            data_path=data_path,
+            target_column='Churn',
+            test_size=0.2,
+            force_rebuild=force_rebuild,
+            output_format=output_format
         )
         
-        logger.info("✓ Data pipeline completed successfully")
+        _log_to_terminal("✓ Data pipeline completed successfully")
         
         # Return serializable summary instead of raw numpy arrays
         return {
@@ -285,6 +295,10 @@ def run_training_pipeline(
     try:
         # Change to project directory
         os.chdir(project_root)
+
+        _log_to_terminal(
+            f"[airflow_tasks] Starting training pipeline | data_path={data_path} | training_engine={training_engine} | data_format={data_format}"
+        )
         
         # Set default model parameters
         if model_params is None:
@@ -297,8 +311,6 @@ def run_training_pipeline(
         # Import and execute pipeline
         from pipelines.training_pipeline import training_pipeline
         
-        logger.info(f"Starting training pipeline: {training_engine}")
-        
         result = training_pipeline(
             data_path=data_path,
             model_params=model_params,
@@ -308,7 +320,7 @@ def run_training_pipeline(
             data_format=data_format
         )
         
-        logger.info("✓ Training pipeline completed successfully")
+        _log_to_terminal("✓ Training pipeline completed successfully")
         
         # Return serializable summary
         return {
@@ -321,6 +333,143 @@ def run_training_pipeline(
         
     except Exception as e:
         logger.error(f"✗ Training pipeline failed: {str(e)}")
+        raise
+
+def run_kafka_batch_consumer(
+        max_messages: int = 1000,
+        timeout: int = 10,
+        group_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Run the Kafka batch consumer through the pipeline module.
+
+    This wrapper is used by the Airflow batch consumer DAG so the DAG itself
+    stays declarative and keeps all execution logic in one place.
+    """
+    project_root = setup_project_environment()
+
+    try:
+        os.chdir(project_root)
+
+        _log_to_terminal(
+            f"[airflow_tasks] Starting Kafka batch consumer | max_messages={max_messages} | timeout={timeout} | group_id={group_id}"
+        )
+
+        from pipelines.consumer import MLKafkaConsumer
+
+        processed = MLKafkaConsumer.run_kafka_consumer_batch(
+            max_messages=max_messages,
+            timeout=timeout,
+            group_id=group_id
+        )
+
+        _log_to_terminal(f"✓ Kafka batch consumer completed successfully | processed={processed}")
+
+        return {
+            'status': 'success',
+            'processed_messages': processed,
+            'message': 'Kafka batch consumer completed successfully'
+        }
+
+    except Exception as e:
+        logger.error(f"✗ Kafka batch consumer failed: {str(e)}")
+        raise
+
+def run_kafka_consumer_streaming(
+        max_messages: int = 50,
+        timeout: int = 5,
+        group_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Run a small Kafka consumer batch on a streaming schedule.
+
+    The DAG uses this to simulate streaming via frequent small batches while
+    keeping the actual processing logic inside the pipeline module.
+    """
+    project_root = setup_project_environment()
+
+    try:
+        os.chdir(project_root)
+
+        _log_to_terminal(
+            f"[airflow_tasks] Starting Kafka consumer streaming batch | max_messages={max_messages} | timeout={timeout} | group_id={group_id}"
+        )
+
+        from pipelines.consumer import MLKafkaConsumer
+
+        processed = MLKafkaConsumer.run_kafka_consumer_batch(
+            max_messages=max_messages,
+            timeout=timeout,
+            group_id=group_id
+        )
+
+        _log_to_terminal(f"✓ Kafka consumer streaming batch completed successfully | processed={processed}")
+
+        return {
+            'status': 'success',
+            'processed_messages': processed,
+            'message': 'Kafka consumer streaming batch completed successfully'
+        }
+
+    except Exception as e:
+        logger.error(f"✗ Kafka consumer streaming batch failed: {str(e)}")
+        raise
+
+def trigger_kafka_consumer_streaming_dag(
+        cycle: int,
+        processed_messages: int,
+        total_processed: int,
+        group_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Queue the streaming consumer DAG in Airflow UI for a completed cycle."""
+    project_root = setup_project_environment()
+
+    try:
+        os.chdir(project_root)
+
+        payload = {
+            'cycle': cycle,
+            'processed_messages': processed_messages,
+            'total_processed': total_processed,
+            'group_id': group_id,
+        }
+        _log_to_terminal(
+            f"[airflow_tasks] Triggering kafka_consumer_streaming_dag | cycle={cycle} | processed={processed_messages} | total_processed={total_processed}"
+        )
+
+        try:
+            from airflow.api.client.local_client import Client
+            client = Client(None, None)
+            client.trigger_dag(
+                dag_id='kafka_consumer_streaming_dag',
+                run_id=None,
+                conf=payload,
+            )
+            _log_to_terminal("✓ kafka_consumer_streaming_dag queued via Airflow local client")
+            return {
+                'status': 'success',
+                'dag_id': 'kafka_consumer_streaming_dag',
+                'trigger_mode': 'local_client',
+                'conf': payload,
+            }
+        except Exception as local_error:
+            logger.warning(f"Local client trigger failed for kafka_consumer_streaming_dag: {local_error}")
+
+        conf = json.dumps(payload)
+        subprocess.run(
+            ["airflow", "dags", "trigger", "kafka_consumer_streaming_dag", "--conf", conf],
+            check=True,
+        )
+        _log_to_terminal("✓ kafka_consumer_streaming_dag queued via Airflow CLI")
+        return {
+            'status': 'success',
+            'dag_id': 'kafka_consumer_streaming_dag',
+            'trigger_mode': 'cli',
+            'conf': payload,
+        }
+
+    except Exception as e:
+        logger.error(f"✗ Failed to trigger kafka_consumer_streaming_dag: {str(e)}")
         raise
 
 def validate_data_pipeline_outputs(project_root: str) -> bool:
@@ -404,6 +553,10 @@ def run_inference_pipeline(
     try:
         # Change to project directory
         os.chdir(project_root)
+
+        _log_to_terminal(
+            f"[airflow_tasks] Starting inference pipeline | model_path={model_path} | encoders_path={encoders_path}"
+        )
         
         # Auto-detect model path if not provided
         if model_path is None:
@@ -444,11 +597,15 @@ def run_inference_pipeline(
     "MonthlyCharges": 29.85,
     "TotalCharges": 358.5
 }
+
+        _log_to_terminal(
+            f"[airflow_tasks] Inference sample payload prepared | customerID={sample_data.get('customerID', 'N/A')}"
+        )
         
         # Import and execute pipeline
-        from streaming_inference_pipeline import initialize_inference_system, streaming_inference
+        from pipelines.streaming_inference_pipeline import initialize_inference_system, streaming_inference
         
-        logger.info(f"Starting inference pipeline: {model_path}")
+        _log_to_terminal(f"[airflow_tasks] Loading inference system for model_path={model_path}")
         
         # Initialize inference system
         inference = initialize_inference_system(
@@ -459,7 +616,7 @@ def run_inference_pipeline(
         # Run inference
         result = streaming_inference(inference, sample_data)
         
-        logger.info("✓ Inference pipeline completed successfully")
+        _log_to_terminal("✓ Inference pipeline completed successfully")
         
         # Return serializable summary
         return {

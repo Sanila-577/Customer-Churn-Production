@@ -82,8 +82,9 @@ def analyze_predictions(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
             'churn_rate': 0.0,
             'avg_confidence': 0.0,
             'high_risk_customers': [],
-            'geography_breakdown': defaultdict(int),
-            'age_groups': defaultdict(int),
+            'gender_breakdown': defaultdict(int),
+            'tenure_groups': defaultdict(int),
+            'monthly_charge_groups': defaultdict(int),
             'latest_predictions': []
         }
         
@@ -119,31 +120,44 @@ def analyze_predictions(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
                     if confidence > 70:
                         customer_id = msg.get('customer_id', 'Unknown')
                         original_data = msg.get('original_data', {})
+                        monthly_charges = original_data.get('MonthlyCharges', 'Unknown')
                         period_stats['high_risk_customers'].append({
                             'customer_id': customer_id,
                             'confidence': confidence,
-                            'geography': original_data.get('Geography', 'Unknown'),
-                            'age': original_data.get('Age', 'Unknown'),
-                            'credit_score': original_data.get('CreditScore', 'Unknown')
+                            'gender': original_data.get('gender', 'Unknown'),
+                            'tenure': original_data.get('tenure', 'Unknown'),
+                            'monthly_charges': monthly_charges,
+                            'payment_method': original_data.get('PaymentMethod', 'Unknown')
                         })
                 else:
                     period_stats['retain_predictions'] += 1
                 
-                # Geography breakdown
+                # Gender breakdown
                 original_data = msg.get('original_data', {})
-                geography = original_data.get('Geography', 'Unknown')
-                period_stats['geography_breakdown'][geography] += 1
+                gender = original_data.get('gender', 'Unknown')
+                period_stats['gender_breakdown'][gender] += 1
                 
-                # Age groups
-                age = original_data.get('Age', 0)
-                if isinstance(age, (int, float)):
-                    if age < 30:
-                        age_group = 'Under 30'
-                    elif age < 50:
-                        age_group = '30-50'
+                # Tenure groups
+                tenure = original_data.get('tenure', 0)
+                if isinstance(tenure, (int, float)):
+                    if tenure < 12:
+                        tenure_group = 'New'
+                    elif tenure < 36:
+                        tenure_group = 'Established'
                     else:
-                        age_group = 'Over 50'
-                    period_stats['age_groups'][age_group] += 1
+                        tenure_group = 'Loyal'
+                    period_stats['tenure_groups'][tenure_group] += 1
+
+                # Monthly charge groups
+                monthly_charges = original_data.get('MonthlyCharges', 0)
+                if isinstance(monthly_charges, (int, float)):
+                    if monthly_charges < 35:
+                        charge_group = 'Low'
+                    elif monthly_charges < 75:
+                        charge_group = 'Medium'
+                    else:
+                        charge_group = 'High'
+                    period_stats['monthly_charge_groups'][charge_group] += 1
         
         # Calculate rates and averages
         if period_stats['total_predictions'] > 0:
@@ -192,29 +206,36 @@ def print_analytics(stats: Dict[str, Any]):
         print("\n🕐 LAST HOUR DETAILED ANALYSIS")
         print("-" * 80)
         
-        # Geography breakdown
-        print("📍 By Geography:")
-        for geo, count in hour_data['geography_breakdown'].items():
+        # Gender breakdown
+        print("👥 By Gender:")
+        for gender, count in hour_data['gender_breakdown'].items():
             percentage = (count / hour_data['total_predictions']) * 100
-            print(f"   {geo:<10}: {count:>3} predictions ({percentage:>5.1f}%)")
+            print(f"   {gender:<10}: {count:>3} predictions ({percentage:>5.1f}%)")
         
-        # Age groups
-        print("\n👥 By Age Group:")
-        for age_group, count in hour_data['age_groups'].items():
+        # Tenure groups
+        print("\n⏱ By Tenure Group:")
+        for tenure_group, count in hour_data['tenure_groups'].items():
             percentage = (count / hour_data['total_predictions']) * 100
-            print(f"   {age_group:<10}: {count:>3} predictions ({percentage:>5.1f}%)")
+            print(f"   {tenure_group:<12}: {count:>3} predictions ({percentage:>5.1f}%)")
+
+        # Monthly charge groups
+        print("\n💳 By Monthly Charge Group:")
+        for charge_group, count in hour_data['monthly_charge_groups'].items():
+            percentage = (count / hour_data['total_predictions']) * 100
+            print(f"   {charge_group:<10}: {count:>3} predictions ({percentage:>5.1f}%)")
         
         # High risk customers
         high_risk = hour_data['high_risk_customers']
         if high_risk:
             print(f"\n🚨 HIGH RISK CUSTOMERS (>70% churn probability):")
-            print("   Customer   | Geography | Age | Credit | Confidence")
+            print("   Customer   | Gender    | Tenure | Monthly | Payment Method | Confidence")
             print("   " + "-" * 50)
             for customer in high_risk[:10]:  # Show top 10
                 print(f"   {str(customer['customer_id']):<10} | "
-                      f"{str(customer['geography']):<9} | "
-                      f"{str(customer['age']):<3} | "
-                      f"{str(customer['credit_score']):<6} | "
+                      f"{str(customer['gender']):<9} | "
+                      f"{str(customer['tenure']):<6} | "
+                      f"{str(customer['monthly_charges']):<7} | "
+                      f"{str(customer['payment_method']):<14} | "
                       f"{customer['confidence']:<6.1f}%")
         else:
             print("\n✅ No high-risk customers in the last hour")
@@ -224,7 +245,7 @@ def print_analytics(stats: Dict[str, Any]):
     if latest:
         print(f"\n🕘 LATEST PREDICTIONS (Last 10 minutes)")
         print("-" * 80)
-        print("Time     | Customer   | Prediction | Confidence | Geography")
+        print("Time     | Customer   | Prediction | Confidence | Gender")
         print("-" * 80)
         
         for pred in latest[:10]:
@@ -237,10 +258,10 @@ def print_analytics(stats: Dict[str, Any]):
             confidence = prediction_info.get('Confidence', '0%')[:6]
             
             original_data = pred.get('original_data', {})
-            geography = str(original_data.get('Geography', 'Unknown'))[:7]
+            gender = str(original_data.get('gender', 'Unknown'))[:7]
             
             status_emoji = "🔴" if 'Churn' in status else "🟢"
-            print(f"{time_str} | {customer_id:<10} | {status_emoji} {status:<6} | {confidence:<10} | {geography}")
+            print(f"{time_str} | {customer_id:<10} | {status_emoji} {status:<6} | {confidence:<10} | {gender}")
     
     print("\n" + "=" * 80)
     print("💡 Use 'make kafka-sample-scored' for detailed message inspection")

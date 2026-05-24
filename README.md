@@ -1,406 +1,205 @@
-# Enhanced MLflow Artifact Tracking and Airflow Orchestration for ML Pipelines
+# Telco Churn Prediction with Kafka and Airflow
 
-This project demonstrates production-ready machine learning pipelines with comprehensive MLflow artifact tracking with Airflow Dags, focusing on customer churn prediction.
+This project implements a telco churn prediction pipeline with local Apache Airflow orchestration, native Apache Kafka streaming, and PySpark-based model training and inference.
 
-<img width="1505" height="649" alt="Screenshot 2026-05-19 at 09 16 29" src="https://github.com/user-attachments/assets/a88743dd-860b-42a1-a90d-edd409e47169" />
+## Prerequisites
 
+- Python 3.9+
+- Java 17+
+- Apache Kafka 3.7+ installed natively
+- uv package manager recommended
 
-<img width="1363" height="681" alt="image" src="https://github.com/user-attachments/assets/2f02ee9c-61f2-4d7c-8c15-bb930089fa5e" />
+## Quick Start
 
-## 🎯 Project Overview
-
-A complete ML system with enhanced MLflow tracking that provides:
-
-- **Comprehensive Data Lineage**: Track data from raw input to final model predictions
-- **Rich Artifact Management**: Automated logging of datasets, models, visualizations, and metadata
-- **Production-Ready Monitoring**: Real-time inference tracking and performance monitoring
-- **Complete Reproducibility**: All artifacts needed to reproduce experiments and results
-
-## 📁 Project Structure
-
-```
-./
-├── README.md                          # This file - comprehensive project documentation
-├── make.ps1                           # PowerShell helper to run pipelines on Windows
-├── config.yaml                        # Central configuration management
-├── requirements.txt                   # Python dependencies
-├── stepplan.md                       # Task planning and dependency tracking
-│
-├── artifacts/                         # Generated artifacts and models
-│   ├── data/                         # Processed datasets
-│   │   ├── X_train.csv               # Training features
-│   │   ├── X_test.csv                # Testing features
-│   │   ├── Y_train.csv               # Training labels
-│   │   └── Y_test.csv                # Testing labels
-│   ├── encode/                       # Feature encoders
-│   │   ├── Gender_encoder.json       # Gender feature encoder
-│   │   └── Geography_encoder.json    # Geography feature encoder
-│   ├── models/                       # Trained models
-│   │   └── churn_analysis.joblib     # Main trained model
-│   └── mlflow_run_artifacts/         # MLflow-specific artifacts
-│       └── {run_id}/                 # Run-specific artifacts
-│           ├── visualizations_*/     # Data visualizations by stage
-│           └── final_csv_files/      # Final dataset metadata
-│
-├── data/                             # Data storage
-│   ├── raw/                          # Original raw data
-│   │   └── TelcoCustomerChurn.csv    # Raw customer churn dataset (project file)
-│   └── processed/                    # Intermediate processed data
-│       └── imputed.csv               # Data after missing value handling
-│
-├── mlruns/                           # MLflow tracking storage
-│   ├── 0/                           # Default experiment
-│   ├── models/                      # MLflow model registry
-│   └── {experiment_id}/             # Experiment-specific runs
-│       └── {run_id}/                # Individual run artifacts
-│           ├── artifacts/           # Run artifacts
-│           ├── metrics/             # Logged metrics
-│           ├── params/              # Logged parameters
-│           └── tags/                # Run tags and metadata
-│
-├── pipelines/                        # ML pipeline implementations
-│   ├── __pycache__/                 # Python cache files
-│   ├── data_pipeline.py             # ✨ Enhanced data processing pipeline
-│   ├── training_pipeline.py         # ✨ Enhanced model training pipeline
-│   └── streaming_inference_pipeline.py # ✨ Enhanced inference pipeline
-│
-├── src/                             # Core ML modules
-│   ├── __pycache__/                 # Python cache files
-│   ├── __init__.py                  # Package initialization
-│   ├── data_ingestion.py            # Data loading and validation
-│   ├── data_spiltter.py             # Train/test splitting strategies
-│   ├── feature_binning.py           # Feature binning transformations
-│   ├── feature_encoding.py          # Feature encoding strategies
-│   ├── feature_scaling.py           # Feature scaling transformations
-│   ├── handle_missing_values.py     # Missing value handling strategies
-│   ├── model_building.py            # Model architecture definitions
-│   ├── model_evaluation.py          # Model evaluation metrics
-│   ├── model_inference.py           # Model inference and prediction
-│   ├── model_training.py            # Model training orchestration
-│   └── outlier_detection.py         # Outlier detection and handling
-│
-└── utils/                           # Utility modules
-    ├── __pycache__/                 # Python cache files
-    ├── config.py                    # Configuration management
-    └── mlflow_utils.py              # MLflow tracking utilities
-```
-
-## 🚀 Key Enhancements Implemented
-
-### 1. **Enhanced Data Pipeline** (`pipelines/data_pipeline.py`)
-
-#### **📊 Comprehensive Data Profiling**
-
-- **Stage-wise Tracking**: Profiles data at each processing stage (raw → missing_handled → outliers_removed → encoded → final)
-- **Rich Visualizations**: Automatic generation of distribution plots, correlation matrices
-- **Dataset Artifacts**: Proper MLflow dataset tracking with lineage and versioning
-
-#### **🔍 Data Quality Monitoring**
-
-- **Metrics Tracking**: Rows, columns, missing values, memory usage at each stage
-- **Transformation Logging**: Before/after metrics for each transformation step
-- **Error Handling**: Graceful handling of processing failures with detailed logging
-
-#### **📁 Artifact Management**
-
-```python
-# Example: Data profiling and visualization
-create_data_visualizations(df, 'raw', run_artifacts_dir)
-log_stage_metrics(df, 'raw')
-
-# MLflow dataset tracking
-raw_dataset = mlflow.data.from_pandas(df, source=data_path, name="raw_churn_data")
-mlflow.log_input(raw_dataset, context="raw_data")
-```
-
-### 2. **Enhanced Training Pipeline** (`pipelines/training_pipeline.py`)
-
-#### **🎯 Model Performance Tracking**
-
-- **Comprehensive Visualizations**: Confusion matrices, ROC curves, feature importance plots
-- **Training Metadata**: Training time, model size, complexity metrics
-- **Performance Analytics**: Detailed model performance analysis and comparison
-
-#### **📈 Model Artifacts**
-
-```python
-# Example: Model performance visualization
-create_model_performance_visualizations(model, X_test, y_test, evaluation_results, 
-                                      run_artifacts_dir, 'XGboost')
-
-# Model metadata logging
-log_model_metadata(model, 'XGboost', model_params, training_time, run_artifacts_dir)
-```
-
-### 3. **Enhanced Inference Pipeline** (`pipelines/streaming_inference_pipeline.py`)
-
-#### **⚡ Real-time Monitoring**
-
-- **Batch Processing**: Configurable batch sizes for efficient logging (default: 100 predictions)
-- **Performance Tracking**: Inference time, prediction distributions, risk categorization
-- **Production Monitoring**: Real-time model performance metrics
-
-#### **📊 Prediction Analytics**
-
-```python
-# Example: Inference tracking
-class InferenceTracker:
-    def track_prediction(self, input_data, prediction_result, inference_time):
-        # Tracks individual predictions with metadata
-        # Logs batches automatically when batch size is reached
-```
-
-## 🛠️ MLflow Artifacts Generated
-
-### **Data Pipeline Artifacts**
-
-```
-MLflow Run Artifacts:
-├── raw_data/                         # Original dataset
-├── visualizations/                   # Stage-wise data visualizations
-│   ├── raw/                         # Raw data distributions
-│   ├── encoded/                     # Post-encoding visualizations  
-│   └── final/                       # Final processed data plots
-├── final_datasets/                   # Train/test CSV files with metadata
-│   ├── X_train.csv, X_test.csv      # Feature datasets
-│   ├── Y_train.csv, Y_test.csv      # Label datasets
-│   └── final_csv_metadata.json      # Comprehensive metadata
-└── processed_datasets/               # Final processed datasets
-```
-
-### **Training Pipeline Artifacts**
-
-```
-MLflow Run Artifacts:
-├── model_performance/                # Model performance analysis
-│   ├── XGboost/                     # Model-specific artifacts
-│   │   ├── confusion_matrix_XGboost.png
-│   │   ├── roc_curve_XGboost.png
-│   │   ├── feature_importance_XGboost.png
-│   │   └── prediction_distribution_XGboost.png
-├── model_metadata/                   # Model metadata and information
-│   └── model_metadata_XGboost.json
-├── trained_models/                   # Actual model files
-│   └── churn_analysis.joblib
-└── training_summary/                 # Complete training summary
-    └── training_summary.json
-```
-
-### **Inference Pipeline Artifacts**
-
-```
-MLflow Run Artifacts:
-├── inference_batches/                # Prediction batch logs
-│   ├── inference_batch_20241219_143022.json
-│   └── inference_batch_20241219_143122.json
-└── prediction_analytics/             # Inference performance metrics
-```
-
-## 📊 MLflow Tracking Features
-
-### **Dataset Tracking**
-
-- **MLflow Datasets**: Proper dataset versioning and lineage tracking
-- **Schema Evolution**: Automatic tracking of schema changes
-- **Data Lineage**: Complete traceability from raw data to final models
-
-### **Metrics Logged**
-
-```python
-# Data Pipeline Metrics
-- raw_rows, raw_columns, raw_missing_values, raw_memory_mb
-- missing_handled_rows_removed, outliers_removed_count
-- final_train_samples, final_test_samples, final_features
-- train_class_0, train_class_1, test_class_0, test_class_1
-
-# Training Pipeline Metrics  
-- training_time_seconds, model_size_mb, model_complexity
-- accuracy, precision, recall, f1, roc_auc
-- XGboost_training_time_seconds, XGboost_model_size_mb
-
-# Inference Pipeline Metrics
-- batch_size, avg_inference_time_ms, avg_churn_probability
-- high_risk_predictions, medium_risk_predictions, low_risk_predictions
-```
-
-### **Parameters Logged**
-
-```python
-# Pipeline Configuration
-- final_feature_names, preprocessing_steps, data_pipeline_version
-- model_type, training_strategy, sklearn_version
-- feature_encoding_applied, feature_scaling_applied
-
-# Model Parameters
-- n_estimators, max_depth, random_state
-- test_size, missing_value_strategy, outlier_detection_method
-```
-
-## 🚀 Getting Started
-
-### **Prerequisites**
-
-```powershell
-# Create a venv if you don't have one (script also creates venv when you run the install target):
-python -m venv venv
-
-# Activate the venv (Windows PowerShell)
-.\venv\Scripts\Activate.ps1
-# or, if your project uses .venv
-.\.venv\Scripts\Activate.ps1
-
-# Install dependencies with uv (recommended) so installers are executed via uv:
-uv pip install -r requirements.txt
-
-# Or, if you don't use uv, use pip inside the venv:
-python -m pip install -r requirements.txt
-```
-
-### **Running the Pipelines (preferred via `make.ps1`)**
-
-> The repository provides a PowerShell helper `make.ps1` with targets that activate the venv when present and run the pipelines.
-
-#### **1. Data Pipeline**
-
-```powershell
-# Preferred (uses the script and venv activation if available)
-.\make.ps1 data-pipeline
-
-# Or directly (module style)
-python -m pipelines.data_pipeline
-```
-
-#### **2. Training Pipeline**
-
-```powershell
-.\make.ps1 train-pipeline
-# Or directly
-python -m pipelines.training_pipeline
-```
-
-#### **3. Inference Pipeline**
-
-```powershell
-.\make.ps1 streaming-inference
-
-python -m pipelines.streaming_inference_pipeline
-```
-
-### **MLflow UI**
-
-```powershell
-# Use the script (it will try to activate the venv and launch MLflow)
-.\make.ps1 mlflow-ui
-
-# Or activate venv and run MLflow explicitly (script uses port 5001 by default):
-.\venv\Scripts\Activate.ps1
-mlflow ui --backend-store-uri file:./mlruns --default-artifact-root ./artifacts --host 127.0.0.1 --port 5001
-
-# Access at: http://127.0.0.1:5001
-```
-
-## 📈 Key Benefits
-
-### **🔍 Enhanced Observability**
-
-- **Complete Lineage**: Track data and model lineage from raw input to predictions
-- **Rich Visualizations**: Automatic generation of insightful plots and charts
-- **Comprehensive Metrics**: Detailed metrics at every pipeline stage
-
-### **🚀 Production Ready**
-
-- **Error Handling**: Robust error handling with graceful degradation
-- **Monitoring**: Real-time inference monitoring and performance tracking
-- **Reproducibility**: Complete artifact tracking for experiment reproduction
-
-### **⚡ Developer Experience**
-
-- **Automated Tracking**: Minimal code changes for maximum tracking benefit
-- **Rich Metadata**: Comprehensive metadata for all artifacts
-- **Easy Debugging**: Quick access to intermediate results and visualizations
-
-## 🔧 Configuration
-
-The system is configured through `config.yaml`:
-
-## 📊 Performance Optimizations
-
-### **Code Efficiency**
-
-- **68% Code Reduction**: Optimized from ~950 lines to ~300 lines in data pipeline
-- **Consolidated Functions**: Streamlined helper functions for better maintainability
-- **Essential Visualizations**: Focus on most valuable plots and metrics
-
-### **Resource Management**
-
-- **Memory Efficient**: Efficient handling of large datasets with cleanup
-- **Batch Processing**: Configurable batch sizes for inference tracking
-- **Error Recovery**: Graceful fallbacks when artifact logging fails
-
-## 🎯 Future Enhancements
-
-- **Data Drift Detection**: Monitor for data drift in production
-- **Model Registry Management**: Automated model stage transitions
-- **Advanced Monitoring**: Additional performance and quality metrics
-- **Integration Testing**: Comprehensive pipeline testing framework
-
-## 📝 Development Notes
-
-This enhanced MLflow tracking system provides:
-
-- **Production-grade logging** throughout all modules
-- **Comprehensive error handling** and input validation
-- **Enhanced type safety** and documentation
-- **Complete artifact traceability** for ML operations
-
-The implementation follows clean architecture principles with separation of concerns and comprehensive observability for production ML systems.
-
----
-
-## ☁️ Airflow Integration
-
-This project includes Airflow DAGs for orchestrating the pipelines (see `dags/`). When Airflow is initialized the DAG files are copied into `.airflow/dags/`.
-
-- Web UI: http://localhost:8080 (login: `admin` / `admin` after initialization)
-
-Use the provided `Makefile` targets (run from the repository root) to initialize, start, and interact with Airflow:
+### 1. Environment Setup
 
 ```bash
-# Initialize Airflow (creates .airflow, DB, and admin user)
+make install
+```
+
+This creates or uses `.venv` and installs the project dependencies.
+
+### 2. Initialize Airflow
+
+```bash
 make airflow-init
-
-# Start webserver + scheduler
 make airflow-start
+```
 
-# Check Airflow health
+Airflow runs locally with the project-local metadata database in `.airflow/`. The UI is available at http://localhost:8080.
+
+### 3. Setup Kafka
+
+```bash
+source setup_kafka_env.sh
+make kafka-format
+make kafka-start-bg
+make kafka-topics
+```
+
+Kafka topics used by this project are:
+
+- `telco.raw.customers`
+- `telco.churn.predictions`
+- `telco.deadletter`
+
+### 4. Run the Pipeline
+
+#### Option A: Airflow UI
+
+- Open http://localhost:8080
+- Trigger the desired DAG from the UI
+
+Current DAG ids:
+
+- `kafka_batch_consumer_dag`
+- `kafka_consumer_streaming_dag`
+
+#### Option B: Command Line
+
+Batch processing:
+
+```bash
+make kafka-producer-batch
+make kafka-consumer
+```
+
+Streaming processing:
+
+```bash
+make kafka-consumer-continuous
+make kafka-producer-stream
+```
+
+The streaming consumer now queues `kafka_consumer_streaming_dag` at the end of every non-empty inference cycle, so the Airflow UI gets a run as soon as a cycle finishes. The streaming producer also queues the same DAG after the stream run completes. If you prefer the alias used in the workflow, `make kafka-produce-stream` maps to `make kafka-producer-stream`.
+
+## Key Commands
+
+### ML Pipelines
+
+```bash
+make data-pipeline
+make train-pipeline
+make streaming-inference
+```
+
+### Kafka Operations
+
+```bash
+make kafka-start-bg
+make kafka-stop
+make kafka-topics
+make kafka-producer-batch
+make kafka-producer-stream
+make kafka-produce-stream
+make kafka-consumer
+make kafka-consumer-continuous
+make kafka-check
+make kafka-reset
+```
+
+### Airflow Operations
+
+```bash
+make airflow-init
+make airflow-start
+make airflow-kill
+make airflow-reset
 make airflow-health
-
-# Trigger DAGs (all or individually)
 make airflow-trigger-all
-make airflow-trigger-data-pipeline
-make airflow-trigger-training-pipeline
-make airflow-trigger-inference-pipeline
-
-# One-off DAG task run (local test)
-make airflow-test-data-pipeline
-make airflow-test-training-pipeline
-make airflow-test-inference-pipeline
+make airflow-trigger-kafka-batch-consumer
+make airflow-trigger-kafka-consumer-streaming
 ```
 
-Notes and troubleshooting:
-
-- The `Makefile` uses the project virtual environment at `.venv`. Activate it manually if needed:
+### Monitoring
 
 ```bash
-source .venv/bin/activate
+make mlflow-ui
+make kafka-sample-scored
 ```
 
-- To stop tracking local Airflow runtime files (for example `.airflow/airflow.db`) after updating `.gitignore`:
+## Data Flow
 
-```bash
-git rm -r --cached .airflow
-git add .
-git commit -m "Stop tracking Airflow runtime files"
-```
+1. Data ingestion from `data/raw/TelcoCustomerChurn.csv`
+2. Feature engineering and preprocessing in `src/`
+3. Model training with PySpark via `make train-pipeline`
+4. Kafka event production to `telco.raw.customers`
+5. Continuous or batch inference through Kafka consumers
+6. Predictions written to `telco.churn.predictions`
 
-- Ensure `make data-pipeline` has been run once so required artifacts (`artifacts/encode`, `artifacts/scale`, `artifacts/models`) exist before triggering DAGs that depend on them.
+## Airflow DAGs
+
+The DAGs in `dags/` are copied into `.airflow/dags/` during Airflow initialization.
+
+| DAG id | Schedule | Owner | Purpose |
+| --- | --- | --- | --- |
+| `kafka_batch_consumer_dag` | Hourly | sanila wijesekara | Batch Kafka scoring flow |
+| `kafka_consumer_streaming_dag` | Every minute | sanila wijesekara | Streaming Kafka scoring flow |
+
+The data, training, and inference pipelines are still available as direct `make` targets, but they are no longer tracked as Airflow DAGs in `dags/`.
+
+Streaming behavior:
+
+- `kafka-producer-stream` queues `kafka_consumer_streaming_dag` after the stream producer exits.
+- `kafka-consumer-continuous` queues `kafka_consumer_streaming_dag` after every non-empty inference cycle.
+- `kafka-consumer` remains the batch consumer entrypoint and maps to `kafka_batch_consumer_dag`.
+
+## Configuration
+
+Main configuration file: `config.yaml`
+
+Important settings:
+
+- Training engine: PySpark by default
+- Model type: Random Forest
+- Data split: 80/20
+- Kafka bootstrap server: `localhost:9092`
+- Airflow home: `.airflow/`
+
+The project owner in the DAGs is `sanila wijesekara`.
+
+## Logs and Monitoring
+
+- Airflow web UI: http://localhost:8080
+- Airflow logs: `.airflow/logs/<dag_id>/<task_id>/`
+- Airflow scheduler logs: `.airflow/logs/scheduler/`
+- Kafka logs: `runtime/kafka.log`
+- MLflow UI: http://localhost:5001
+
+## Troubleshooting
+
+### Airflow DAG won't run
+
+- Ensure `AIRFLOW_HOME="$PWD/.airflow"`
+- Ensure `PYTHONPATH="$PWD"`
+- Check scheduler status and DAG logs under `.airflow/logs/`
+
+### Kafka broker won't start
+
+- Ensure Java 17+ is installed
+- Verify `KAFKA_HOME` is set when using the native Kafka scripts
+- Check for port conflicts on `9092` and `9093`
+- Review `runtime/kafka.log`
+
+If `kafka_consumer_streaming_dag` does not appear in the UI, make sure the Kafka broker is running before using the streaming producer target. The stream trigger is queued after the producer completes and after each non-empty continuous consumer cycle.
+
+### Model not found
+
+- Run `make train-pipeline`
+- Confirm `artifacts/models/` contains the trained model artifacts
+
+## Dependencies
+
+- Apache Airflow 2.10+
+- PySpark 3.5+
+- confluent-kafka
+- pandas
+- numpy
+- scikit-learn
+- MLflow
+
+See `requirements.txt` for the full list.
+
+## Author
+
+**Sanila Wijesekara**

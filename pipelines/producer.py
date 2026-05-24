@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class CustomerEventGenerator:
-    """Generate customer events from real ChurnModelling.csv dataset"""
+    """Generate customer events from the Telco churn dataset."""
     
     def __init__(self, seed: int = 42):
 
@@ -33,12 +33,11 @@ class CustomerEventGenerator:
         self.dataset = pd.read_csv(data_path)
         self.dataset.dropna()
 
-        if 'Exited' in self.dataset.columns:
-            self.features = self.dataset.drop('Exited', axis=1)
-            self.labels = self.dataset['Exited']
-        else:
-            self.features = self.dataset.copy()
-            self.labels = None
+        if 'Churn' not in self.dataset.columns:
+            raise ValueError("Telco churn dataset must contain a 'Churn' column")
+
+        self.features = self.dataset.drop('Churn', axis=1)
+        self.labels = self.dataset['Churn'].map({'No': 0, 'Yes': 1})
 
         logger.info(f"Loadded {len(self.dataset)} customer record !!!")
     
@@ -61,8 +60,13 @@ class CustomerEventGenerator:
         event.update({
                     'event_timestamp': datetime.utcnow().isoformat(),
                     'event_id':f"evt_{idx}_{int(time.time())}",
-                    'true_churn_label': int(self.labels.iloc[idx]) if self.labels is not None else None 
+                    'true_churn_label': int(self.labels.iloc[idx]) if self.labels is not None and pd.notna(self.labels.iloc[idx]) else None 
                     })
+
+        customer_id = event.get('CustomerId') or event.get('customerID') or event.get('customerId')
+        if customer_id is not None:
+            event['CustomerId'] = customer_id
+            event['customerID'] = customer_id
         return event
 
     def generate_batch(self, num_events: int) -> List[Dict[str, Any]]:
@@ -88,17 +92,26 @@ class MLKafkaProducer:
             return
             
         status = "✅" if success else "❌"
-        customer_id = str(event.get('CustomerId', 'N/A'))[:8]
-        geography = str(event.get('Geography', 'N/A'))[:5]
-        age = str(event.get('Age', 'N/A'))[:2]
+        customer_id = str(event.get('customerID') or event.get('CustomerId') or 'N/A')[:8]
+        gender = str(event.get('gender', 'N/A'))[:6]
+        tenure = str(event.get('tenure', 'N/A'))[:4]
+        monthly_charges = str(event.get('MonthlyCharges', 'N/A'))[:8]
         
-        print(f"{status} Event {count:3d}: Customer {customer_id} | {geography} | Age {age}")
+
+        print(f"{status} Event {count:3d}: Customer {customer_id} | {gender} | Tenure {tenure} | Monthly {monthly_charges}")
     
     def setup_topic(self) -> bool:
         """Setup churn prediction topic"""
         cfg = load_config().get('kafka', {})
         topic = cfg.get('topics', {}).get('raw_input', 'telco.raw.customers')
         return create_topic(topic, partitions=1, replication_factor=1)
+
+    def _customer_key(self, event: Dict[str, Any]) -> str:
+        """Resolve the customer identifier used as the Kafka message key."""
+        customer_id = event.get('CustomerId') or event.get('customerID') or event.get('customerId')
+        if customer_id is None:
+            return 'N/A'
+        return str(customer_id)
     
     def produce_batch(self, topic: str | None = None, num_events: int = 100) -> int:
         """Produce batch of events"""
@@ -112,7 +125,7 @@ class MLKafkaProducer:
             success = self.producer.send_message(
                                                 topic=topic,
                                                 message=event,
-                                                key=str(event['CustomerId'])   
+                                                key=self._customer_key(event)
                                                 )
 
             if success:
@@ -146,7 +159,7 @@ class MLKafkaProducer:
                     success = self.producer.send_message(
                                                 topic=topic,
                                                 message=event,
-                                                key=str(event['CustomerId'])   
+                                                key=self._customer_key(event)
                                                 )
 
                     total_events += 1 

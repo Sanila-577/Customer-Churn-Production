@@ -133,14 +133,27 @@ kafka-topics:
 	@kafka-topics.sh --bootstrap-server localhost:9092 --list
 
 kafka-producer-stream:
-	@echo "🌊 Starting Kafka streaming producer (real data sampling)..."
-	@if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
+	@status=0; \
+	echo "🌊 Starting Kafka streaming producer (real data sampling)..."; \
+	if ! kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then \
 		echo "❌ Cannot connect to native Kafka broker"; \
 		echo "💡 Please start broker with 'make kafka-start'"; \
-		exit 1; \
-	fi
-	@echo "🎯 Streaming real customer events to localhost:9092 (1 event/sec for 5 mins)"
-	@$(VENV_PY) -m pipelines.producer --mode streaming --rate 1 --duration 300
+		status=1; \
+	else \
+		echo "🎯 Streaming real customer events to localhost:9092 (1 event/sec for 5 mins)"; \
+		$(VENV_PY) -m pipelines.producer --mode streaming --rate 1 --duration 300 || status=$$?; \
+	fi; \
+	echo "🚀 Triggering kafka_consumer_streaming_dag in Airflow UI..."; \
+	export AIRFLOW_HOME="$(shell pwd)/.airflow"; \
+	export AIRFLOW__CORE__LOAD_EXAMPLES=False; \
+	export PYTHONPATH="$(shell pwd):$$PYTHONPATH"; \
+	export PYTHONUNBUFFERED=1; \
+	export PYTHONWARNINGS="ignore::DeprecationWarning"; \
+	$(AIRFLOW) dags trigger kafka_consumer_streaming_dag || status=$$?; \
+	echo "✅ kafka_consumer_streaming_dag trigger step finished"; \
+	exit $$status
+
+kafka-produce-stream: kafka-producer-stream
 
 
 kafka-producer-batch:
@@ -168,6 +181,8 @@ kafka-consumer-continuous:
 	@echo "📡 Monitoring for NEW messages (real-time ML processing)"
 	@echo "🛑 Press Ctrl+C to stop monitoring"
 	@$(VENV_PY) -m pipelines.consumer --continuous --poll-interval 5
+
+kafka-consumer-stream: kafka-consumer-continuous
 	
 kafka-check:
 	@echo "🔍 Checking native Kafka broker status..."
@@ -264,6 +279,7 @@ kafka-help:
 	@echo ""
 	@echo "Data Commands:"
 	@echo "  kafka-producer-stream  - Start streaming producer (real data)"
+	@echo "  kafka-produce-stream   - Alias for kafka-producer-stream"
 	@echo "  kafka-producer-batch   - Start batch producer (real data)"
 	@echo "  kafka-consumer         - Start batch ML consumer"
 	@echo "  kafka-consumer-continuous - Start continuous ML consumer"
@@ -457,41 +473,69 @@ airflow-trigger-all: ## Trigger all DAGs manually for testing
 	@export AIRFLOW_HOME="$(shell pwd)/.airflow" && \
 	export AIRFLOW__CORE__LOAD_EXAMPLES=False && \
 	export PYTHONPATH="$(shell pwd):$$PYTHONPATH" && \
+	export PYTHONUNBUFFERED=1 && \
 	export PYTHONWARNINGS="ignore::DeprecationWarning" && \
-	echo "Triggering data pipeline..." && \
-	$(AIRFLOW) dags trigger data_pipeline_dag && \
-	echo "Triggering training pipeline..." && \
-	$(AIRFLOW) dags trigger train_pipeline_dag && \
-	echo "Triggering inference pipeline..." && \
-	$(AIRFLOW) dags trigger inference_pipeline_dag
-	@echo "✅ All DAGs triggered! Check the Web UI at http://localhost:8080"
+	echo "Running data pipeline in foreground so logs appear in the terminal..." && \
+	$(AIRFLOW) dags test data_pipeline_dag $$(date -u +%F) && \
+	echo "Running training pipeline in foreground so logs appear in the terminal..." && \
+	$(AIRFLOW) dags test train_pipeline_dag $$(date -u +%F) && \
+	echo "Running inference pipeline in foreground so logs appear in the terminal..." && \
+	$(AIRFLOW) dags test inference_pipeline_dag $$(date -u +%F) && \
+	echo "Running Kafka batch inference DAG in foreground so logs appear in the terminal..." && \
+	$(AIRFLOW) dags test kafka_batch_consumer_dag $$(date -u +%F) && \
+	echo "Running Kafka streaming inference DAG in foreground so logs appear in the terminal..." && \
+	$(AIRFLOW) dags test kafka_consumer_streaming_dag $$(date -u +%F)
+	@echo "✅ All DAG logs were run in the terminal."
 
 airflow-trigger-data-pipeline: ## Trigger data pipeline DAG manually
-	@echo "Triggering data pipeline DAG..."
+	@echo "Running data pipeline DAG in foreground so logs appear in the terminal..."
 	@export AIRFLOW_HOME="$(shell pwd)/.airflow" && \
 	export AIRFLOW__CORE__LOAD_EXAMPLES=False && \
 	export PYTHONPATH="$(shell pwd):$$PYTHONPATH" && \
+	export PYTHONUNBUFFERED=1 && \
 	export PYTHONWARNINGS="ignore::DeprecationWarning" && \
-	$(AIRFLOW) dags trigger data_pipeline_dag
-	@echo "✅ data_pipeline_dag triggered"
+	$(AIRFLOW) dags test data_pipeline_dag $$(date -u +%F)
+	@echo "✅ data_pipeline_dag completed in the terminal"
 
 airflow-trigger-training-pipeline: ## Trigger training pipeline DAG manually
-	@echo "Triggering training pipeline DAG..."
+	@echo "Running training pipeline DAG in foreground so logs appear in the terminal..."
 	@export AIRFLOW_HOME="$(shell pwd)/.airflow" && \
 	export AIRFLOW__CORE__LOAD_EXAMPLES=False && \
 	export PYTHONPATH="$(shell pwd):$$PYTHONPATH" && \
+	export PYTHONUNBUFFERED=1 && \
 	export PYTHONWARNINGS="ignore::DeprecationWarning" && \
-	$(AIRFLOW) dags trigger train_pipeline_dag
-	@echo "✅ train_pipeline_dag triggered"
+	$(AIRFLOW) dags test train_pipeline_dag $$(date -u +%F)
+	@echo "✅ train_pipeline_dag completed in the terminal"
 
 airflow-trigger-inference-pipeline: ## Trigger inference pipeline DAG manually
-	@echo "Triggering inference pipeline DAG..."
+	@echo "Running inference pipeline DAG in foreground so logs appear in the terminal..."
 	@export AIRFLOW_HOME="$(shell pwd)/.airflow" && \
 	export AIRFLOW__CORE__LOAD_EXAMPLES=False && \
 	export PYTHONPATH="$(shell pwd):$$PYTHONPATH" && \
+	export PYTHONUNBUFFERED=1 && \
 	export PYTHONWARNINGS="ignore::DeprecationWarning" && \
-	$(AIRFLOW) dags trigger inference_pipeline_dag
-	@echo "✅ inference_pipeline_dag triggered"
+	$(AIRFLOW) dags test inference_pipeline_dag $$(date -u +%F)
+	@echo "✅ inference_pipeline_dag completed in the terminal"
+
+airflow-trigger-kafka-batch-consumer: ## Trigger Kafka batch inference DAG manually
+	@echo "Running Kafka batch inference DAG in foreground so logs appear in the terminal..."
+	@export AIRFLOW_HOME="$(shell pwd)/.airflow" && \
+	export AIRFLOW__CORE__LOAD_EXAMPLES=False && \
+	export PYTHONPATH="$(shell pwd):$$PYTHONPATH" && \
+	export PYTHONUNBUFFERED=1 && \
+	export PYTHONWARNINGS="ignore::DeprecationWarning" && \
+	$(AIRFLOW) dags test kafka_batch_consumer_dag $$(date -u +%F)
+	@echo "✅ kafka_batch_consumer_dag completed in the terminal"
+
+airflow-trigger-kafka-consumer-streaming: ## Trigger Kafka streaming inference DAG manually
+	@echo "Running Kafka streaming inference DAG in foreground so logs appear in the terminal..."
+	@export AIRFLOW_HOME="$(shell pwd)/.airflow" && \
+	export AIRFLOW__CORE__LOAD_EXAMPLES=False && \
+	export PYTHONPATH="$(shell pwd):$$PYTHONPATH" && \
+	export PYTHONUNBUFFERED=1 && \
+	export PYTHONWARNINGS="ignore::DeprecationWarning" && \
+	$(AIRFLOW) dags trigger kafka_consumer_streaming_dag
+	@echo "✅ kafka_consumer_streaming_dag triggered in Airflow UI"
 
 airflow-health: ## Check Airflow health status
 	@echo "Checking Airflow health status..."

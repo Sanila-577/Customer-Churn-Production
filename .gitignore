@@ -96,3 +96,4 @@ data/*.db
 airflow-webserver.pid
 airflow-scheduler.pid
 airflow-triggerer.pid
+runtime/
