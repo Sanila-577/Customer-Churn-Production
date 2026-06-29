@@ -2,6 +2,9 @@
 
 This project implements a telco churn prediction pipeline with local Apache Airflow orchestration, native Apache Kafka streaming, and PySpark-based model training and inference.
 
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/e818a20f-0510-4d16-81b7-87cedece470c" />
+
+
 <img width="1510" height="412" alt="Screenshot 2026-05-24 at 16 08 24" src="https://github.com/user-attachments/assets/f5c2c815-9314-4cde-8e9a-80b3658379b8" />
 
 
@@ -133,6 +136,8 @@ make kafka-sample-scored
 6. Predictions written to `telco.churn.predictions`
 
 ## Airflow DAGs
+
+<img width="1510" height="412" alt="Screenshot 2026-05-24 at 16 08 24" src="https://github.com/user-attachments/assets/f5c2c815-9314-4cde-8e9a-80b3658379b8" />
 
 The DAGs in `dags/` are copied into `.airflow/dags/` during Airflow initialization.
 
